@@ -12,4 +12,5 @@ with no dependencies, no build step, and no external calls, so it runs anywhere
 
 ## Hosting
 
-Static files served by GitHub Pages. No server, no cost. Domain: nightnightloveyou.com.
+Static files served by Cloudflare Pages, auto-deployed on push to `main`. No server,
+no cost. Domain: nightnightloveyou.com.
