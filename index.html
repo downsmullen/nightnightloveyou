@@ -1,0 +1,636 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<meta name="description" content="A calm thunderstorm scene. Night night, love you.">
+<title>Storm — Night Night Love You</title>
+<!--
+  Night Night Love You — Storm scene.
+
+  Design contract (keep these true forever):
+   - ONE self-contained file. No network calls, no fonts, no CDN, no build step.
+     It must run by double-clicking it offline. The file is the 50-year bet, not the host.
+   - The VISUAL storm stands on its own with the sound off (accessibility / muted by default).
+   - Drawn forked bolts are the star; the sky glow is gentle and capped — never a harsh strobe.
+   - Two sound engines, user-selectable: live "Synth" and a "Recorded" clip.
+
+  TO USE A REAL RECORDED CLIP:
+     Set RECORDED_CLIP_DATA_URI below to a base64 audio data URI, e.g.
+       var RECORDED_CLIP_DATA_URI = "data:audio/mpeg;base64,AAAA....";
+     (Keep it inline so the single-file guarantee holds.)
+     While it's empty, "Recorded" plays a one-time baked copy of the synth — a clearly
+     labelled placeholder, so the Synth-vs-Recorded comparison is only meaningful once a
+     real clip is dropped in.
+
+  The scene is wrapped in a tiny "scene" object so rain / ocean can be added later as
+  siblings without reworking the shell.
+-->
+<style>
+  :root{
+    --bg-top:#04050a;
+    --bg-mid:#0a0d18;
+    --bg-bot:#11131f;
+    --ink:#e7ecff;
+    --ink-dim:rgba(231,236,255,0.55);
+    --panel:rgba(16,20,34,0.55);
+    --panel-line:rgba(160,180,230,0.18);
+    --accent:#9fc0ff;
+    --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; height:100%; background:#000; overflow:hidden; }
+  body{
+    font-family:var(--font);
+    color:var(--ink);
+    -webkit-tap-highlight-color:transparent;
+    user-select:none;
+  }
+  #sky{
+    position:fixed; inset:0; width:100%; height:100%; display:block;
+    touch-action:manipulation;
+  }
+
+  /* ---- tap-to-begin overlay ---- */
+  #begin{
+    position:fixed; inset:0; z-index:30;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:1.1rem; text-align:center; padding:2rem;
+    background:radial-gradient(120% 120% at 50% 40%, #0a0e1c 0%, #05060c 70%, #000 100%);
+    cursor:pointer; transition:opacity .8s ease;
+  }
+  #begin.hide{ opacity:0; pointer-events:none; }
+  #begin .title{ font-size:clamp(1.8rem,6vw,3rem); font-weight:600; letter-spacing:.02em; }
+  #begin .sub{ font-size:clamp(.95rem,2.6vw,1.15rem); color:var(--ink-dim); }
+  #begin .cta{
+    margin-top:.6rem; font-size:.95rem; color:var(--accent);
+    border:1px solid var(--panel-line); border-radius:999px; padding:.7rem 1.5rem;
+    background:rgba(159,192,255,0.06);
+  }
+  #begin .whisper{ position:fixed; bottom:1.4rem; font-size:.85rem; color:var(--ink-dim); }
+
+  /* ---- control panel ---- */
+  #panel{
+    position:fixed; z-index:20; left:50%; bottom:max(1rem, env(safe-area-inset-bottom));
+    transform:translateX(-50%);
+    display:flex; align-items:center; gap:.9rem; flex-wrap:wrap; justify-content:center;
+    padding:.7rem .95rem;
+    background:var(--panel); border:1px solid var(--panel-line);
+    border-radius:16px; backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);
+    opacity:.55; transition:opacity .3s ease; max-width:calc(100vw - 1.5rem);
+  }
+  #panel:hover, #panel:focus-within{ opacity:1; }
+  #panel .group{ display:flex; align-items:center; gap:.5rem; }
+  #panel label{ font-size:.8rem; color:var(--ink-dim); white-space:nowrap; }
+  #intensity{ width:clamp(110px,28vw,190px); accent-color:var(--accent); height:1.4rem; }
+  .seg{ display:flex; border:1px solid var(--panel-line); border-radius:10px; overflow:hidden; }
+  .seg button{
+    font:inherit; font-size:.82rem; color:var(--ink-dim);
+    background:transparent; border:0; padding:.5rem .8rem; cursor:pointer; min-height:2.2rem;
+  }
+  .seg button.on{ background:rgba(159,192,255,0.16); color:var(--ink); }
+  #mute{
+    font:inherit; font-size:.82rem; color:var(--ink); cursor:pointer; min-height:2.2rem;
+    background:transparent; border:1px solid var(--panel-line); border-radius:10px; padding:.5rem .8rem;
+  }
+  #mute.muted{ color:var(--ink-dim); }
+  #panel .cap{
+    flex-basis:100%; text-align:center; font-size:.72rem; line-height:1.35;
+    color:var(--ink-dim); padding:0 .2rem;
+  }
+</style>
+</head>
+<body>
+  <canvas id="sky"></canvas>
+
+  <div id="panel" aria-label="storm controls">
+    <div class="group">
+      <label for="intensity">calm</label>
+      <input id="intensity" type="range" min="0" max="100" value="30" aria-label="storm intensity">
+      <label for="intensity">wild</label>
+    </div>
+    <div class="group seg" role="group" aria-label="sound engine">
+      <button id="eng-synth" class="on" type="button">Synth</button>
+      <button id="eng-rec" type="button">Recorded</button>
+    </div>
+    <button id="mute" type="button" aria-pressed="false">Sound on</button>
+    <div class="cap">tap the sky for a bolt &nbsp;·&nbsp; &ldquo;Recorded&rdquo; is a placeholder until a clip is added</div>
+  </div>
+
+  <div id="begin" role="button" tabindex="0" aria-label="tap to begin">
+    <div class="title">Storm</div>
+    <div class="sub">a quiet thunderstorm</div>
+    <div class="cta">tap to begin</div>
+    <div class="whisper">night night, love you</div>
+  </div>
+
+<script>
+(function(){
+  'use strict';
+
+  /* ============================================================
+     0. Config
+     ============================================================ */
+
+  // Paste a base64 audio data URI here to make "Recorded" a real clip (see header comment).
+  var RECORDED_CLIP_DATA_URI = "";
+
+  var REDUCED = false;
+  try { REDUCED = window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch(e){}
+
+  var state = {
+    intensity: 0.30,   // 0..1
+    engine: 'synth',   // 'synth' | 'recorded'
+    muted: false,
+    running: false
+  };
+
+  /* ============================================================
+     1. Canvas
+     ============================================================ */
+
+  var canvas = document.getElementById('sky');
+  var g = canvas.getContext('2d');
+  var W = 0, H = 0, DPR = 1;
+  var stars = [];
+
+  function resize(){
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    W = canvas.clientWidth; H = canvas.clientHeight;
+    canvas.width = Math.max(1, Math.round(W * DPR));
+    canvas.height = Math.max(1, Math.round(H * DPR));
+    g.setTransform(DPR, 0, 0, DPR, 0, 0);
+    buildStars();
+  }
+  function buildStars(){
+    stars = [];
+    var n = Math.round((W * H) / 14000);
+    for (var i = 0; i < n; i++){
+      stars.push({
+        x: Math.random() * W,
+        y: Math.random() * H * 0.72,
+        r: Math.random() * 1.1 + 0.25,
+        a: Math.random() * 0.5 + 0.15,
+        tw: Math.random() * Math.PI * 2
+      });
+    }
+  }
+  window.addEventListener('resize', resize);
+
+  /* ============================================================
+     2. Audio graph + buffers
+     ============================================================ */
+
+  var actx = null, master = null, analyser = null, revIn = null;
+  var timeData = null;
+  var noiseBuf = null, brownBuf = null;
+  var bakedClip = null;     // synth baked to a buffer (placeholder for "Recorded")
+  var recordedClip = null;  // real clip decoded from RECORDED_CLIP_DATA_URI, if provided
+
+  function makeNoise(ctx, sec, brown){
+    var len = Math.floor(ctx.sampleRate * sec);
+    var buf = ctx.createBuffer(1, len, ctx.sampleRate);
+    var d = buf.getChannelData(0), i;
+    if (!brown){
+      for (i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    } else {
+      var last = 0;
+      for (i = 0; i < len; i++){
+        var w = Math.random() * 2 - 1;
+        last = (last + 0.02 * w) / 1.02;
+        d[i] = last * 3.5;
+      }
+    }
+    return buf;
+  }
+
+  function makeIR(ctx, sec, decay){
+    var len = Math.floor(ctx.sampleRate * sec);
+    var ir = ctx.createBuffer(2, len, ctx.sampleRate);
+    for (var ch = 0; ch < 2; ch++){
+      var d = ir.getChannelData(ch);
+      for (var i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, decay);
+    }
+    return ir;
+  }
+
+  function initAudio(){
+    if (actx) return;
+    var AC = window.AudioContext || window.webkitAudioContext;
+    actx = new AC();
+
+    master = actx.createGain();
+    master.gain.value = state.muted ? 0 : 1;
+
+    analyser = actx.createAnalyser();
+    analyser.fftSize = 1024;
+    timeData = new Uint8Array(analyser.fftSize);
+
+    master.connect(analyser);
+    analyser.connect(actx.destination);
+
+    var reverb = actx.createConvolver();
+    reverb.buffer = makeIR(actx, 3.6, 3.0);
+    var revGain = actx.createGain();
+    revGain.gain.value = 0.9;
+    reverb.connect(revGain);
+    revGain.connect(master);
+    revIn = reverb;
+
+    noiseBuf = makeNoise(actx, 3, false);
+    brownBuf = makeNoise(actx, 3, true);
+
+    bakeRecordedPlaceholder();
+
+    if (RECORDED_CLIP_DATA_URI){
+      fetch(RECORDED_CLIP_DATA_URI)
+        .then(function(r){ return r.arrayBuffer(); })
+        .then(function(b){ return actx.decodeAudioData(b); })
+        .then(function(buf){ recordedClip = buf; })
+        .catch(function(){ /* fall back to baked placeholder */ });
+    }
+  }
+
+  /* ============================================================
+     3. Thunder synthesis (shared by live playback and offline baking)
+     ============================================================ */
+
+  // Schedules a full thunder onto `ctx`, summing into `out`, with a reverb send `rIn`.
+  // RELAXING PRESET (distant thunder): brown-noise body, heavily low-passed, slow
+  // swelling onset (NO startling broadband crack), long rolling decay, slow tremolo,
+  // generous dark reverb. `prox` caps perceived closeness so even "wild" never snaps.
+  // NOTE: numbers are a first pass; being refined against the relaxing-thunder research.
+  function renderThunder(ctx, out, rIn, nB, brB, intensity, when){
+    var I = Math.max(0, Math.min(1, intensity));
+    var prox = I * 0.5;                 // capped closeness — keeps the startle out
+    var amp = ctx.createGain();
+    amp.gain.value = 1;
+    amp.connect(out);
+    if (rIn){
+      var send = ctx.createGain();
+      send.gain.value = 0.7;            // wetter — distance smears the tail
+      amp.connect(send); send.connect(rIn);
+    }
+    var dur = 3.4 + (1 - I) * 3.4;      // long, slow rolls (~3.4-6.8s)
+
+    // --- soft swell where a close strike would "crack" (low-passed, slow attack) ---
+    (function(){
+      var s = ctx.createBufferSource(); s.buffer = brB; s.loop = true;
+      s.playbackRate.value = 0.8 + Math.random() * 0.3;
+      var lp = ctx.createBiquadFilter(); lp.type = 'lowpass';
+      lp.frequency.value = 220 + prox * 600;            // stays under ~500Hz
+      lp.Q.value = 0.3;
+      var ga = ctx.createGain();
+      var peak = 0.12 + prox * 0.22;
+      ga.gain.setValueAtTime(0.0001, when);
+      ga.gain.exponentialRampToValueAtTime(peak, when + 0.13 + (1 - prox) * 0.10); // ~180-230ms onset (research: ~140-220ms fully clears the startle reflex)
+      ga.gain.exponentialRampToValueAtTime(0.0008, when + 0.6 + (1 - I) * 0.6);
+      s.connect(lp); lp.connect(ga); ga.connect(amp);
+      s.start(when); s.stop(when + 1.4);
+    })();
+
+    // --- the rolling rumble + echoes (the star of a relaxing storm) ---
+    var taps = 3 + Math.floor(Math.random() * 3);
+    for (var k = 0; k < taps; k++){
+      (function(k){
+        var off = (k === 0) ? 0 : (0.18 + Math.random() * 0.9 * k);
+        var ts = when + off;
+        var s = ctx.createBufferSource(); s.buffer = brB; s.loop = true;
+        s.playbackRate.value = 0.5 + Math.random() * 0.4;
+        var lp = ctx.createBiquadFilter(); lp.type = 'lowpass';
+        lp.frequency.value = Math.max(70, 90 + prox * 160 - k * 12); // ~70-250Hz, darker per tap
+        lp.Q.value = 0.3;
+        var ga = ctx.createGain();
+        var peak = (0.5 - k * 0.07) * (0.55 + (1 - I) * 0.5);
+        if (peak < 0.05) peak = 0.05;
+        ga.gain.setValueAtTime(0.0001, ts);
+        ga.gain.exponentialRampToValueAtTime(peak, ts + 0.12 + Math.random() * 0.12); // soft attack
+        ga.gain.exponentialRampToValueAtTime(0.0006, ts + dur * (0.8 + Math.random() * 0.5));
+        // slow rolling tremolo (1-4Hz) — the soothing undulation
+        var lfo = ctx.createOscillator(); lfo.frequency.value = 1 + Math.random() * 3;
+        var lg = ctx.createGain(); lg.gain.value = 0.18;
+        lfo.connect(lg); lg.connect(ga.gain);
+        s.connect(lp); lp.connect(ga); ga.connect(amp);
+        s.start(ts); s.stop(ts + dur + 0.6);
+        lfo.start(ts); lfo.stop(ts + dur + 0.6);
+      })(k);
+    }
+
+    // --- gentle sub weight (felt, not a thump) ---
+    (function(){
+      var o = ctx.createOscillator(); o.type = 'sine';
+      var f = 34 + prox * 20;
+      o.frequency.setValueAtTime(f * 1.3, when);
+      o.frequency.exponentialRampToValueAtTime(f, when + 0.6);
+      var ga = ctx.createGain();
+      var peak = 0.10 + prox * 0.14;
+      ga.gain.setValueAtTime(0.0001, when);
+      ga.gain.exponentialRampToValueAtTime(peak, when + 0.06);  // soft attack
+      ga.gain.exponentialRampToValueAtTime(0.0005, when + 1.8 + I * 0.6);
+      o.connect(ga); ga.connect(amp);
+      o.start(when); o.stop(when + 2.8);
+    })();
+  }
+
+  function bakeRecordedPlaceholder(){
+    try {
+      var OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+      if (!OAC) return;
+      var sr = actx.sampleRate, secs = 6.5;
+      var oc = new OAC(2, Math.floor(sr * secs), sr);
+      var nB = makeNoise(oc, 3, false), brB = makeNoise(oc, 3, true);
+      var rev = oc.createConvolver(); rev.buffer = makeIR(oc, 3.6, 3.0);
+      var rg = oc.createGain(); rg.gain.value = 0.9; rev.connect(rg); rg.connect(oc.destination);
+      renderThunder(oc, oc.destination, rev, nB, brB, 0.4, 0.05);
+      oc.startRendering().then(function(buf){ bakedClip = buf; }).catch(function(){});
+    } catch(e){}
+  }
+
+  function playRecorded(intensity, when){
+    var clip = recordedClip || bakedClip;
+    if (!clip){ // not ready yet — don't drop the thunder, use live synth
+      renderThunder(actx, master, revIn, noiseBuf, brownBuf, intensity, when);
+      return;
+    }
+    var s = actx.createBufferSource(); s.buffer = clip;
+    s.playbackRate.value = 0.85 + intensity * 0.4;
+    var ga = actx.createGain(); ga.gain.value = 0.4 + intensity * 0.7;
+    var send = actx.createGain(); send.gain.value = 0.45;
+    s.connect(ga); ga.connect(master); ga.connect(send); send.connect(revIn);
+    s.start(when);
+  }
+
+  /* ============================================================
+     4. Lightning (visual) — drawn forked bolts, the star of the show
+     ============================================================ */
+
+  var bolts = [];
+  var illum = 0;                                  // current sky-glow charge
+  var illumMax = REDUCED ? 0.16 : 0.42;           // hard cap → never a harsh strobe
+
+  // Jagged path via midpoint displacement; returns points + branch seeds.
+  function jagged(x0, y0, x1, y1, disp, depth, branchChance){
+    var pts = [{x:x0,y:y0},{x:x1,y:y1}];
+    var branches = [];
+    for (var d = 0; d < depth; d++){
+      var np = [];
+      for (var i = 0; i < pts.length - 1; i++){
+        var a = pts[i], b = pts[i+1];
+        np.push(a);
+        var mx = (a.x+b.x)/2, my = (a.y+b.y)/2;
+        var dx = b.x-a.x, dy = b.y-a.y, len = Math.hypot(dx,dy) || 1;
+        var off = (Math.random()*2 - 1) * disp;
+        mx += -dy/len * off; my += dx/len * off;
+        np.push({x:mx, y:my});
+        if (d > 1 && Math.random() < branchChance){
+          var ang = Math.atan2(b.y-my, b.x-mx) + (Math.random()*1.3 - 0.65);
+          var bl = len * (0.5 + Math.random()*0.7);
+          branches.push({x0:mx, y0:my, x1:mx + Math.cos(ang)*bl, y1:my + Math.sin(ang)*bl});
+        }
+      }
+      np.push(pts[pts.length-1]);
+      pts = np; disp *= 0.5;
+    }
+    return {pts:pts, branches:branches};
+  }
+
+  function spawnBolt(I){
+    var x0 = W * (0.12 + Math.random() * 0.76);
+    var y0 = -12;
+    var x1 = x0 + (Math.random()*2 - 1) * W * 0.18;
+    var y1 = H * (0.5 + Math.random() * 0.45);
+    var disp = (38 + Math.random()*60) * (0.6 + I*0.8);
+    var main = jagged(x0, y0, x1, y1, disp, 6, 0.34);
+    var subs = [];
+    for (var i = 0; i < main.branches.length; i++){
+      var br = main.branches[i];
+      subs.push(jagged(br.x0, br.y0, br.x1, br.y1, 16, 4, 0).pts);
+    }
+    var b = {
+      main: main.pts,
+      subs: subs,
+      life: 1,
+      decay: 1 / (0.16 + Math.random()*0.22),   // ~0.16–0.38s visible
+      width: 1.3 + I*2.2,
+      bright: 0.65 + I*0.35,
+      flicker: (Math.random() < 0.5) ? (1 + Math.floor(Math.random()*2)) : 0,
+      flickerT: 0,
+      tint: (Math.random() < 0.5) ? '170,200,255' : '222,228,255'
+    };
+    bolts.push(b);
+    illum = Math.min(illumMax, illum + b.bright * (REDUCED ? 0.25 : 0.5));
+    return b;
+  }
+
+  function drawBolt(b){
+    var alpha = Math.max(0, b.life) * b.bright;
+    if (alpha <= 0) return;
+    g.lineCap = 'round'; g.lineJoin = 'round';
+    // wide soft glow → thin white-hot core
+    var passes = [[b.width*7, 0.05], [b.width*3.2, 0.11], [b.width*1.6, 0.5], [b.width*0.7, 1.0]];
+    for (var p = 0; p < passes.length; p++){
+      g.beginPath();
+      var pts = b.main, i;
+      g.moveTo(pts[0].x, pts[0].y);
+      for (i = 1; i < pts.length; i++) g.lineTo(pts[i].x, pts[i].y);
+      for (var s = 0; s < b.subs.length; s++){
+        var sp = b.subs[s];
+        g.moveTo(sp[0].x, sp[0].y);
+        for (i = 1; i < sp.length; i++) g.lineTo(sp[i].x, sp[i].y);
+      }
+      g.lineWidth = passes[p][0];
+      var col = (p === passes.length - 1) ? '255,255,255' : b.tint;
+      g.strokeStyle = 'rgba(' + col + ',' + (passes[p][1] * alpha) + ')';
+      g.stroke();
+    }
+  }
+
+  /* ============================================================
+     5. Sky + meter + main loop
+     ============================================================ */
+
+  function drawSky(t){
+    var grd = g.createLinearGradient(0, 0, 0, H);
+    grd.addColorStop(0, '#04050a');
+    grd.addColorStop(0.6, '#0a0d18');
+    grd.addColorStop(1, '#11131f');
+    g.fillStyle = grd; g.fillRect(0, 0, W, H);
+    for (var i = 0; i < stars.length; i++){
+      var st = stars[i];
+      var tw = st.a * (0.7 + 0.3 * Math.sin(t * 0.0012 + st.tw));
+      g.fillStyle = 'rgba(200,210,235,' + tw + ')';
+      g.fillRect(st.x, st.y, st.r, st.r);
+    }
+  }
+
+  function drawMeter(rms){
+    var x = 18, y = H - 26, w = 120, h = 7;
+    g.fillStyle = 'rgba(255,255,255,0.10)';
+    g.fillRect(x, y, w, h);
+    g.fillStyle = 'rgba(159,192,255,0.9)';
+    g.fillRect(x, y, w * Math.min(1, rms * 3.4), h);
+    g.fillStyle = 'rgba(231,236,255,0.4)';
+    g.font = '11px ' + getComputedStyle(document.body).fontFamily;
+    g.fillText('thunder', x, y - 6);
+  }
+
+  var raf = null, strikeTimer = null, lastT = 0;
+
+  function frame(ts){
+    if (!state.running) return;
+    var dt = lastT ? (ts - lastT) / 1000 : 0;
+    lastT = ts;
+    if (dt > 0.1) dt = 0.1; // clamp after tab-switch etc.
+
+    drawSky(ts);
+
+    // sky glow: bolt charge decays; live thunder adds a gentle audio-driven pulse
+    illum = Math.max(0, illum - dt * 1.6);
+    var rms = 0;
+    if (analyser){
+      analyser.getByteTimeDomainData(timeData);
+      var sum = 0;
+      for (var i = 0; i < timeData.length; i++){ var v = (timeData[i] - 128) / 128; sum += v*v; }
+      rms = Math.sqrt(sum / timeData.length);
+    }
+    var glow = Math.min(illumMax, illum + rms * 0.55);
+    if (glow > 0.002){
+      var gg = g.createLinearGradient(0, 0, 0, H);
+      gg.addColorStop(0, 'rgba(150,170,222,' + glow + ')');
+      gg.addColorStop(1, 'rgba(120,140,200,' + (glow * 0.3) + ')');
+      g.fillStyle = gg; g.fillRect(0, 0, W, H);
+    }
+
+    for (var b = bolts.length - 1; b >= 0; b--){
+      var bo = bolts[b];
+      drawBolt(bo);
+      bo.life -= dt * bo.decay;
+      if (bo.flicker > 0){
+        bo.flickerT += dt;
+        if (bo.flickerT > 0.05 && bo.life < 0.45){
+          bo.life = 1; bo.flicker--; bo.flickerT = 0;
+          illum = Math.min(illumMax, illum + bo.bright * 0.3);
+        }
+      }
+      if (bo.life <= 0) bolts.splice(b, 1);
+    }
+
+    drawMeter(rms);
+    raf = requestAnimationFrame(frame);
+  }
+
+  /* ============================================================
+     6. Strike scheduler  +  the storm "scene"
+     ============================================================ */
+
+  function fireThunder(I, delay){
+    if (!actx) return;
+    var when = actx.currentTime + Math.max(0, delay);
+    if (state.engine === 'recorded') playRecorded(I, when);
+    else renderThunder(actx, master, revIn, noiseBuf, brownBuf, I, when);
+  }
+
+  function autoStrike(){
+    if (!state.running) return;
+    var I = state.intensity;
+    spawnBolt(I);
+    // flash first, rumble after — distance grows as it gets calmer
+    var delay = (1.2 + (1 - I) * 4) * (0.7 + Math.random() * 0.6);
+    fireThunder(I, delay);
+    // schedule the next one
+    var gap = (4 + (1 - I) * 16) * (0.7 + Math.random() * 0.8);
+    if (REDUCED) gap *= 1.6;
+    strikeTimer = setTimeout(autoStrike, gap * 1000);
+  }
+
+  // Manual strike (tap the sky / spacebar): instant bolt + near thunder.
+  function manualStrike(){
+    if (!state.running) return;
+    var I = state.intensity;
+    spawnBolt(Math.min(1, I + 0.2));
+    fireThunder(Math.min(0.8, I + 0.2), 0.35 + Math.random() * 0.4);
+  }
+
+  // The scene seam — add rain/ocean as siblings later.
+  var Storm = {
+    name: 'storm',
+    start: function(){
+      initAudio();
+      if (actx.state === 'suspended') actx.resume();
+      state.running = true;
+      lastT = 0;
+      raf = requestAnimationFrame(frame);
+      autoStrike();
+    },
+    stop: function(){
+      state.running = false;
+      if (raf) cancelAnimationFrame(raf), raf = null;
+      if (strikeTimer) clearTimeout(strikeTimer), strikeTimer = null;
+    }
+  };
+
+  /* ============================================================
+     7. Controls + lifecycle
+     ============================================================ */
+
+  var beginEl = document.getElementById('begin');
+  var slider  = document.getElementById('intensity');
+  var engSyn  = document.getElementById('eng-synth');
+  var engRec  = document.getElementById('eng-rec');
+  var muteBtn = document.getElementById('mute');
+
+  function begin(){
+    if (state.running) return;
+    Storm.start();
+    beginEl.classList.add('hide');
+  }
+  beginEl.addEventListener('click', begin);
+  beginEl.addEventListener('keydown', function(e){
+    if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); begin(); }
+  });
+
+  slider.addEventListener('input', function(){ state.intensity = (+slider.value) / 100; });
+
+  function setEngine(eng){
+    state.engine = eng;
+    engSyn.classList.toggle('on', eng === 'synth');
+    engRec.classList.toggle('on', eng === 'recorded');
+  }
+  engSyn.addEventListener('click', function(){ setEngine('synth'); });
+  engRec.addEventListener('click', function(){ setEngine('recorded'); });
+
+  muteBtn.addEventListener('click', function(){
+    state.muted = !state.muted;
+    if (master) master.gain.value = state.muted ? 0 : 1;
+    muteBtn.classList.toggle('muted', state.muted);
+    muteBtn.textContent = state.muted ? 'Sound off' : 'Sound on';
+    muteBtn.setAttribute('aria-pressed', String(state.muted));
+  });
+
+  // Tap the sky for your own bolt (ignores taps that land on the controls).
+  canvas.addEventListener('pointerdown', function(){ if (state.running) manualStrike(); });
+  window.addEventListener('keydown', function(e){
+    if (e.code === 'Space' && state.running){ e.preventDefault(); manualStrike(); }
+  });
+
+  // Be a good citizen: pause when the tab is hidden (battery + no runaway timers).
+  document.addEventListener('visibilitychange', function(){
+    if (!actx) return;
+    if (document.hidden){
+      if (raf) cancelAnimationFrame(raf), raf = null;
+      if (strikeTimer) clearTimeout(strikeTimer), strikeTimer = null;
+    } else if (state.running){
+      lastT = 0;
+      raf = requestAnimationFrame(frame);
+      autoStrike();
+    }
+  });
+
+  resize();
+  // Draw one calm frame behind the overlay so it isn't pure black before "begin".
+  drawSky(0);
+})();
+</script>
+</body>
+</html>
