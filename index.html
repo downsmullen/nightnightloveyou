@@ -4,28 +4,25 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="dark">
-<meta name="description" content="A calm thunderstorm scene. Night night, love you.">
+<meta name="description" content="A calm rain & thunderstorm scene. Night night, love you.">
 <title>Storm — Night Night Love You</title>
 <!--
-  Night Night Love You — Storm scene.
+  Night Night Love You — Storm scene (v2).
 
   Design contract (keep these true forever):
    - ONE self-contained file. No network calls, no fonts, no CDN, no build step.
      It must run by double-clicking it offline. The file is the 50-year bet, not the host.
-   - The VISUAL storm stands on its own with the sound off (accessibility / muted by default).
+   - The VISUAL scene stands on its own with the sound off (accessibility / muted-friendly).
    - Drawn forked bolts are the star; the sky glow is gentle and capped — never a harsh strobe.
-   - Two sound engines, user-selectable: live "Synth" and a "Recorded" clip.
+   - Calm by default: opens as RAIN ONLY (lightning one tap away). Children are the audience —
+     thunder is opt-in, slow-onset, and distant; nothing ever starts with a sharp transient.
 
-  TO USE A REAL RECORDED CLIP:
-     Set RECORDED_CLIP_DATA_URI below to a base64 audio data URI, e.g.
-       var RECORDED_CLIP_DATA_URI = "data:audio/mpeg;base64,AAAA....";
-     (Keep it inline so the single-file guarantee holds.)
-     While it's empty, "Recorded" plays a one-time baked copy of the synth — a clearly
-     labelled placeholder, so the Synth-vs-Recorded comparison is only meaningful once a
-     real clip is dropped in.
+  Audio path (one synth path — no recorded clip):
+     layers (rain bed, thunder) -> master gain -> limiter (DynamicsCompressor) -> destination
+     A side-tap of the thunder bus feeds the analyser that drives the on-canvas thunder meter
+     and the audio-reactive sky glow (so the steady rain does not light up the sky).
 
-  The scene is wrapped in a tiny "scene" object so rain / ocean can be added later as
-  siblings without reworking the shell.
+  The scene is wrapped in a tiny "scene" object so rain / ocean stay swappable siblings.
 -->
 <style>
   :root{
@@ -70,6 +67,14 @@
   }
   #begin .whisper{ position:fixed; bottom:1.4rem; font-size:.85rem; color:var(--ink-dim); }
 
+  /* ---- the little "night night, love you" that stays while the scene runs ---- */
+  #nnly{
+    position:fixed; z-index:15; left:50%; top:max(1.3rem, env(safe-area-inset-top));
+    transform:translateX(-50%);
+    font-size:.95rem; letter-spacing:.04em; color:rgba(220,228,255,0.92);
+    opacity:0; pointer-events:none; white-space:nowrap;
+  }
+
   /* ---- control panel ---- */
   #panel{
     position:fixed; z-index:20; left:50%; bottom:max(1rem, env(safe-area-inset-bottom));
@@ -83,18 +88,16 @@
   #panel:hover, #panel:focus-within{ opacity:1; }
   #panel .group{ display:flex; align-items:center; gap:.5rem; }
   #panel label{ font-size:.8rem; color:var(--ink-dim); white-space:nowrap; }
-  #intensity{ width:clamp(110px,28vw,190px); accent-color:var(--accent); height:1.4rem; }
-  .seg{ display:flex; border:1px solid var(--panel-line); border-radius:10px; overflow:hidden; }
-  .seg button{
-    font:inherit; font-size:.82rem; color:var(--ink-dim);
-    background:transparent; border:0; padding:.5rem .8rem; cursor:pointer; min-height:2.2rem;
-  }
-  .seg button.on{ background:rgba(159,192,255,0.16); color:var(--ink); }
-  #mute{
+  #panel .level{ width:clamp(90px,20vw,150px); accent-color:var(--accent); height:1.4rem; }
+  .toggle, #sleep, #rain-color, #quiet{
     font:inherit; font-size:.82rem; color:var(--ink); cursor:pointer; min-height:2.2rem;
     background:transparent; border:1px solid var(--panel-line); border-radius:10px; padding:.5rem .8rem;
   }
-  #mute.muted{ color:var(--ink-dim); }
+  .toggle{ color:var(--ink-dim); }
+  .toggle.on{ background:rgba(159,192,255,0.16); color:var(--ink); }
+  #sleep, #rain-color{ color:var(--ink-dim); -webkit-appearance:none; appearance:none; }
+  #quiet{ font-weight:500; }
+  #quiet.muted{ color:var(--ink-dim); background:rgba(159,192,255,0.10); }
   #panel .cap{
     flex-basis:100%; text-align:center; font-size:.72rem; line-height:1.35;
     color:var(--ink-dim); padding:0 .2rem;
@@ -104,18 +107,34 @@
 <body>
   <canvas id="sky"></canvas>
 
+  <div id="nnly" aria-hidden="true">night night, love you</div>
+
   <div id="panel" aria-label="storm controls">
     <div class="group">
-      <label for="intensity">calm</label>
-      <input id="intensity" type="range" min="0" max="100" value="30" aria-label="storm intensity">
-      <label for="intensity">wild</label>
+      <button id="rain-toggle" class="toggle on" type="button" aria-pressed="true">Rain</button>
+      <input id="rain-level" class="level" type="range" min="0" max="100" value="50" aria-label="rain level">
+      <select id="rain-color" aria-label="rain sound colour">
+        <option value="white">white</option>
+        <option value="pink">pink</option>
+        <option value="brown">brown</option>
+      </select>
     </div>
-    <div class="group seg" role="group" aria-label="sound engine">
-      <button id="eng-synth" class="on" type="button">Synth</button>
-      <button id="eng-rec" type="button">Recorded</button>
+    <div class="group">
+      <button id="lightning-toggle" class="toggle" type="button" aria-pressed="false">Lightning</button>
+      <input id="lightning-level" class="level" type="range" min="0" max="100" value="30" aria-label="lightning level and frequency">
     </div>
-    <button id="mute" type="button" aria-pressed="false">Sound on</button>
-    <div class="cap">tap the sky for a bolt &nbsp;·&nbsp; &ldquo;Recorded&rdquo; is a placeholder until a clip is added</div>
+    <div class="group">
+      <label for="sleep">sleep</label>
+      <select id="sleep" aria-label="sleep timer">
+        <option value="off">off</option>
+        <option value="15">15 min</option>
+        <option value="30">30 min</option>
+        <option value="60">60 min</option>
+      </select>
+    </div>
+    <button id="moon-toggle" class="toggle" type="button" aria-pressed="false">fucking moon</button>
+    <button id="quiet" type="button" aria-pressed="false">Quiet everything</button>
+    <div class="cap">tap the sky for a bolt</div>
   </div>
 
   <div id="begin" role="button" tabindex="0" aria-label="tap to begin">
@@ -130,28 +149,70 @@
   'use strict';
 
   /* ============================================================
-     0. Config
+     0. Config + state
      ============================================================ */
-
-  // Paste a base64 audio data URI here to make "Recorded" a real clip (see header comment).
-  var RECORDED_CLIP_DATA_URI = "";
 
   var REDUCED = false;
   try { REDUCED = window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch(e){}
 
+  function clamp01(v){ return Math.max(0, Math.min(1, v)); }
+
+  // Current lunar phase (0 = new, 0.5 = full), from a known new moon + the synodic month.
+  // Pure math, no deps/network — accurate to ~1 day for centuries (fine for a decorative moon).
+  function computeMoonPhase(){
+    var SYN = 29.530588853 * 86400000;     // synodic month, ms
+    var REF = 947182440000;                // 2000-01-06 18:14 UTC, a new moon
+    var p = ((Date.now() - REF) % SYN) / SYN;
+    return (p < 0) ? p + 1 : p;
+  }
+  var moonPhase = computeMoonPhase();
+
+  // Default = RAIN ONLY, lightning one tap away (Tim's decision + both research passes).
   var state = {
-    intensity: 0.30,   // 0..1
-    engine: 'synth',   // 'synth' | 'recorded'
-    muted: false,
+    rain: true,
+    rainLevel: 0.50,        // 0..1
+    rainColor: 'pink',      // 'white' | 'pink' | 'brown' — rain noise spectrum (pink = softer default)
+    lightning: false,
+    lightningLevel: 0.30,   // 0..1 — thunder VOLUME (character is fixed at the researched preset)
+    moon: false,            // moon hidden until turned on
+    muted: false,           // "Quiet everything"
+    timer: 'off',           // 'off' | '15' | '30' | '60'  (minutes)
     running: false
   };
 
+  var LS_KEY = 'nnly-storm-v2';
+  function saveState(){
+    try {
+      localStorage.setItem(LS_KEY, JSON.stringify({
+        rain: state.rain, rainLevel: state.rainLevel, rainColor: state.rainColor,
+        lightning: state.lightning, lightningLevel: state.lightningLevel,
+        moon: state.moon, muted: state.muted, timer: state.timer
+      }));
+    } catch(e){}
+  }
+  function loadState(){
+    try {
+      var s = JSON.parse(localStorage.getItem(LS_KEY) || 'null');
+      if (s && typeof s === 'object'){
+        if (typeof s.rain === 'boolean') state.rain = s.rain;
+        if (typeof s.rainLevel === 'number') state.rainLevel = clamp01(s.rainLevel);
+        if (s.rainColor === 'white' || s.rainColor === 'pink' || s.rainColor === 'brown') state.rainColor = s.rainColor;
+        if (typeof s.lightning === 'boolean') state.lightning = s.lightning;
+        if (typeof s.lightningLevel === 'number') state.lightningLevel = clamp01(s.lightningLevel);
+        if (typeof s.moon === 'boolean') state.moon = s.moon;
+        if (typeof s.muted === 'boolean') state.muted = s.muted;
+        if (s.timer === 'off' || s.timer === '15' || s.timer === '30' || s.timer === '60') state.timer = s.timer;
+      }
+    } catch(e){}
+  }
+
   /* ============================================================
-     1. Canvas
+     1. Canvas + stars
      ============================================================ */
 
   var canvas = document.getElementById('sky');
   var g = canvas.getContext('2d');
+  var nnlyEl = document.getElementById('nnly');   // the persistent "night night, love you"
   var W = 0, H = 0, DPR = 1;
   var stars = [];
 
@@ -162,6 +223,8 @@
     canvas.height = Math.max(1, Math.round(H * DPR));
     g.setTransform(DPR, 0, 0, DPR, 0, 0);
     buildStars();
+    // resizing clears the canvas; repaint the calm frame so the pre-begin sky never goes black
+    if (!state.running) drawSky(0);
   }
   function buildStars(){
     stars = [];
@@ -170,9 +233,10 @@
       stars.push({
         x: Math.random() * W,
         y: Math.random() * H * 0.72,
-        r: Math.random() * 1.1 + 0.25,
-        a: Math.random() * 0.5 + 0.15,
-        tw: Math.random() * Math.PI * 2
+        r: Math.random() * 0.9 + 0.7,    // 0.7–1.6 units (>=1px after DPR)
+        a: Math.random() * 0.5 + 0.35,   // 0.35–0.85 base brightness
+        tw: Math.random() * Math.PI * 2,
+        hero: Math.random() < 0.05       // a few brighter "hero" stars
       });
     }
   }
@@ -182,25 +246,63 @@
      2. Audio graph + buffers
      ============================================================ */
 
-  var actx = null, master = null, analyser = null, revIn = null;
+  var actx = null, master = null, limiter = null, analyser = null;
+  var thunderBus = null, revIn = null, rainGain = null;
   var timeData = null;
-  var noiseBuf = null, brownBuf = null;
-  var bakedClip = null;     // synth baked to a buffer (placeholder for "Recorded")
-  var recordedClip = null;  // real clip decoded from RECORDED_CLIP_DATA_URI, if provided
+  var brownBuf = null, rainBufs = {};   // rainBufs: lazily-built per-colour rain buffers
 
-  function makeNoise(ctx, sec, brown){
-    var len = Math.floor(ctx.sampleRate * sec);
-    var buf = ctx.createBuffer(1, len, ctx.sampleRate);
-    var d = buf.getChannelData(0), i;
-    if (!brown){
-      for (i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
-    } else {
+  // Build a seam-crossfaded, DC-corrected noise buffer that loops with no click and no gap.
+  // color: 'white' | 'pink' | 'brown'. Optional targetRMS normalises loudness so switching the
+  // rain colour changes only the TIMBRE, not the level.
+  function makeNoise(ctx, sec, color, targetRMS){
+    var sr = ctx.sampleRate;
+    var len = Math.floor(sr * sec);
+    var xf = Math.min(Math.floor(sr * 0.05), Math.floor(len / 4)); // ~50ms equal-power crossfade
+    // Generate len + xf samples; the overshoot [len, len+xf) is folded back into the head so the
+    // last sample flows continuously into the first when the buffer loops.
+    var raw = new Float32Array(len + xf), i, w;
+    if (color === 'brown'){
       var last = 0;
-      for (i = 0; i < len; i++){
-        var w = Math.random() * 2 - 1;
+      for (i = 0; i < raw.length; i++){
+        w = Math.random() * 2 - 1;
         last = (last + 0.02 * w) / 1.02;
-        d[i] = last * 3.5;
+        raw[i] = last * 3.5;
       }
+    } else if (color === 'pink'){
+      // Paul Kellet's economical pink-noise filter (−3 dB/oct tilt)
+      var b0=0,b1=0,b2=0,b3=0,b4=0,b5=0,b6=0;
+      for (i = 0; i < raw.length; i++){
+        w = Math.random() * 2 - 1;
+        b0 = 0.99886*b0 + w*0.0555179;
+        b1 = 0.99332*b1 + w*0.0750759;
+        b2 = 0.96900*b2 + w*0.1538520;
+        b3 = 0.86650*b3 + w*0.3104856;
+        b4 = 0.55000*b4 + w*0.5329522;
+        b5 = -0.7616*b5 - w*0.0168980;
+        raw[i] = (b0+b1+b2+b3+b4+b5+b6 + w*0.5362) * 0.11;
+        b6 = w*0.115926;
+      }
+    } else {
+      for (i = 0; i < raw.length; i++) raw[i] = Math.random() * 2 - 1;
+    }
+    var buf = ctx.createBuffer(1, len, sr);
+    var d = buf.getChannelData(0);
+    for (i = 0; i < len; i++) d[i] = raw[i];
+    for (i = 0; i < xf; i++){
+      var t = i / xf;
+      d[i] = d[i] * Math.sin(t * Math.PI / 2) + raw[len + i] * Math.cos(t * Math.PI / 2);
+    }
+    // Remove residual DC (matters most for pink/brown).
+    var mean = 0;
+    for (i = 0; i < len; i++) mean += d[i];
+    mean /= len;
+    for (i = 0; i < len; i++) d[i] -= mean;
+    // Optional loudness normalisation (so the three colours sit at the same level).
+    if (targetRMS){
+      var rms = 0;
+      for (i = 0; i < len; i++) rms += d[i] * d[i];
+      rms = Math.sqrt(rms / len);
+      if (rms > 1e-6){ var k = targetRMS / rms; for (i = 0; i < len; i++) d[i] *= k; }
     }
     return buf;
   }
@@ -220,61 +322,185 @@
     var AC = window.AudioContext || window.webkitAudioContext;
     actx = new AC();
 
+    // master summing bus -> limiter -> destination (the de-pop foundation).
     master = actx.createGain();
-    master.gain.value = state.muted ? 0 : 1;
+    master.gain.value = state.muted ? 0.0001 : 1;
+
+    limiter = actx.createDynamicsCompressor();
+    limiter.threshold.value = -6;   // limiter-style settings (tune by ear)
+    limiter.knee.value = 6;
+    limiter.ratio.value = 12;
+    limiter.attack.value = 0.003;
+    limiter.release.value = 0.25;
 
     analyser = actx.createAnalyser();
     analyser.fftSize = 1024;
     timeData = new Uint8Array(analyser.fftSize);
 
-    master.connect(analyser);
-    analyser.connect(actx.destination);
+    master.connect(limiter);
+    limiter.connect(actx.destination);
 
+    // Thunder bus = the LIGHTNING VOLUME fader. Everything thunder (dry + reverb tail) passes
+    // through it, so the slider scales the whole event in real time. It also feeds the analyser
+    // side-tap, so the steady rain bed does NOT light up the sky-glow / thunder meter.
+    thunderBus = actx.createGain();
+    thunderBus.gain.value = lightningVol(state.lightningLevel);
+    thunderBus.connect(master);
+    thunderBus.connect(analyser);
+
+    // Dark reverb (distance smear) — returns INTO the thunder bus so the fader scales it too.
     var reverb = actx.createConvolver();
     reverb.buffer = makeIR(actx, 3.6, 3.0);
     var revGain = actx.createGain();
-    revGain.gain.value = 0.9;
+    revGain.gain.value = 0.8;
     reverb.connect(revGain);
-    revGain.connect(master);
+    revGain.connect(thunderBus);
     revIn = reverb;
 
-    noiseBuf = makeNoise(actx, 3, false);
-    brownBuf = makeNoise(actx, 3, true);
+    // Rain bus = the master RAIN VOLUME (driven by the rain slider). Each rain instance fades
+    // itself in/out through its own gain into this bus, so colours can crossfade with no gap.
+    rainGain = actx.createGain();
+    rainGain.gain.value = Math.max(0.0001, 0.32 * clamp01(state.rainLevel));
+    rainGain.connect(master);
 
-    bakeRecordedPlaceholder();
+    brownBuf = makeNoise(actx, 3, 'brown');  // thunder body (seamless loop, unchanged)
+    getRainBuf(state.rainColor);             // pre-build the current rain colour
+  }
 
-    if (RECORDED_CLIP_DATA_URI){
-      fetch(RECORDED_CLIP_DATA_URI)
-        .then(function(r){ return r.arrayBuffer(); })
-        .then(function(b){ return actx.decodeAudioData(b); })
-        .then(function(buf){ recordedClip = buf; })
-        .catch(function(){ /* fall back to baked placeholder */ });
-    }
+  // Lazily build + cache each rain colour (5s => a less obvious loop), level-matched.
+  function getRainBuf(color){
+    if (!rainBufs[color]) rainBufs[color] = makeNoise(actx, 5, color, 0.5);
+    return rainBufs[color];
   }
 
   /* ============================================================
-     3. Thunder synthesis (shared by live playback and offline baking)
+     3. Rain bed (the continuous, dominant layer)
+     ============================================================ */
+
+  var rainNodes = null;  // live source/LFO handles for teardown
+
+  // Map the rain slider to the master rain-bus gain (reasoned starting point — tune by ear).
+  function setRainLevel(level){
+    state.rainLevel = clamp01(level);
+    if (!rainGain) return;
+    var target = Math.max(0.0001, 0.32 * state.rainLevel);
+    var now = actx.currentTime;
+    rainGain.gain.cancelScheduledValues(now);
+    rainGain.gain.setValueAtTime(Math.max(0.0001, rainGain.gain.value), now);
+    rainGain.gain.linearRampToValueAtTime(target, now + 0.2);
+  }
+
+  // Lightning loudness lives entirely on the thunder bus, so the slider is a clean VOLUME fader
+  // (real-time, scales dry + reverb together). The thunder's *character* — slow onset, dark
+  // distant timbre, calm spacing — is held FIXED at the researched value below and is NOT touched
+  // by the slider. (The absolute level + range still need a hearing person's check.)
+  var THUNDER_I = 0.30;                                              // fixed synthesis intensity (researched calm preset)
+  function lightningVol(level){ return Math.max(0.0001, 2.0 * clamp01(level)); }
+  function setLightningLevel(level, ramp){
+    state.lightningLevel = clamp01(level);
+    if (!thunderBus) return;
+    var now = actx.currentTime;
+    thunderBus.gain.cancelScheduledValues(now);
+    thunderBus.gain.setValueAtTime(Math.max(0.0001, thunderBus.gain.value), now);
+    thunderBus.gain.linearRampToValueAtTime(lightningVol(state.lightningLevel), now + (ramp ? 0.3 : 0.05));
+  }
+
+  // Build one rain "instance" for a colour, on its own fade gain into the rain bus. Two instances
+  // can coexist briefly so a colour change crossfades with no gap.
+  function buildRainInstance(color){
+    var now = actx.currentTime;
+    var buf = getRainBuf(color);
+    var inst = actx.createGain(); inst.gain.value = 0.0001;
+    inst.connect(rainGain);
+
+    // Steady warm hiss: looping seamless noise, low-rumble removed, harsh highs rolled off.
+    var src = actx.createBufferSource(); src.buffer = buf; src.loop = true;
+    var hp = actx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 100; hp.Q.value = 0.5;
+    var lp = actx.createBiquadFilter(); lp.type = 'lowpass';  lp.frequency.value = 4800; lp.Q.value = 0.4;
+    var shelf = actx.createBiquadFilter(); shelf.type = 'lowshelf'; shelf.frequency.value = 250; shelf.gain.value = 3;
+    src.connect(hp); hp.connect(lp); lp.connect(shelf); shelf.connect(inst);
+
+    // Very slow, predictable "breathing" on the cutoff (life, not variability).
+    var lfo = actx.createOscillator(); lfo.frequency.value = 0.06;
+    var lfoG = actx.createGain(); lfoG.gain.value = 700;
+    lfo.connect(lfoG); lfoG.connect(lp.frequency);
+
+    // Sparse, gentle "patter": band-passed noise with a slow amplitude drift.
+    var pSrc = actx.createBufferSource(); pSrc.buffer = buf; pSrc.loop = true; pSrc.playbackRate.value = 1.3;
+    var bp = actx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 2000; bp.Q.value = 0.6;
+    var pGain = actx.createGain(); pGain.gain.value = 0.10;
+    var pLfo = actx.createOscillator(); pLfo.frequency.value = 0.13;
+    var pLfoG = actx.createGain(); pLfoG.gain.value = 0.05;
+    pLfo.connect(pLfoG); pLfoG.connect(pGain.gain);
+    pSrc.connect(bp); bp.connect(pGain); pGain.connect(inst);
+
+    src.start(now); lfo.start(now); pSrc.start(now); pLfo.start(now);
+    return { gain: inst, src: src, lfo: lfo, pSrc: pSrc, pLfo: pLfo };
+  }
+
+  // Both take the instance OBJECT; the fade gain's AudioParam is inst.gain.gain.
+  function fadeInInstance(inst, secs){
+    var now = actx.currentTime;
+    inst.gain.gain.cancelScheduledValues(now);
+    inst.gain.gain.setValueAtTime(0.0001, now);
+    inst.gain.gain.linearRampToValueAtTime(1, now + secs);
+  }
+  function fadeOutInstance(inst, secs){
+    if (!inst) return;
+    var now = actx.currentTime;
+    inst.gain.gain.cancelScheduledValues(now);
+    inst.gain.gain.setValueAtTime(Math.max(0.0001, inst.gain.gain.value), now);
+    inst.gain.gain.linearRampToValueAtTime(0.0001, now + secs);
+    var stopAt = now + secs + 0.1;
+    try { inst.src.stop(stopAt); inst.lfo.stop(stopAt); inst.pSrc.stop(stopAt); inst.pLfo.stop(stopAt); } catch(e){}
+  }
+
+  function startRain(){
+    if (!actx || rainNodes) return;
+    rainNodes = buildRainInstance(state.rainColor);
+    fadeInInstance(rainNodes, 1.4);   // gentle fade-in (no transient)
+  }
+
+  function stopRain(){
+    if (!actx || !rainNodes) return;
+    fadeOutInstance(rainNodes, 0.8);
+    rainNodes = null;
+  }
+
+  // Swap rain colour with a gapless crossfade (build new, fade in; fade out + stop old).
+  function setRainColor(color){
+    state.rainColor = (color === 'pink' || color === 'brown') ? color : 'white';
+    if (!actx || !rainNodes) return;       // not playing yet — applied on next start
+    var old = rainNodes;
+    rainNodes = buildRainInstance(state.rainColor);
+    fadeInInstance(rainNodes, 1.2);
+    fadeOutInstance(old, 1.0);
+  }
+
+  /* ============================================================
+     4. Thunder synthesis (one synth path)
      ============================================================ */
 
   // Schedules a full thunder onto `ctx`, summing into `out`, with a reverb send `rIn`.
-  // RELAXING PRESET (distant thunder): brown-noise body, heavily low-passed, slow
-  // swelling onset (NO startling broadband crack), long rolling decay, slow tremolo,
-  // generous dark reverb. `prox` caps perceived closeness so even "wild" never snaps.
-  // NOTE: numbers are a first pass; being refined against the relaxing-thunder research.
-  function renderThunder(ctx, out, rIn, nB, brB, intensity, when){
-    var I = Math.max(0, Math.min(1, intensity));
+  // RELAXING PRESET (distant thunder): brown-noise body, heavily low-passed, slow swelling
+  // onset (>= ~200ms — NO startling crack), long rolling decay, slow tremolo, dark reverb.
+  // `intensity` caps perceived closeness. Overall LOUDNESS is set on the thunder bus (the
+  // lightning-volume fader), NOT here — so the slider can't alter the researched character.
+  // NOTE: these numbers are reasoned starting points — tune by ear.
+  function renderThunder(ctx, out, rIn, brB, intensity, when){
+    var I = clamp01(intensity);
     var prox = I * 0.5;                 // capped closeness — keeps the startle out
     var amp = ctx.createGain();
-    amp.gain.value = 1;
+    amp.gain.value = 1;                 // fixed synthesis level; the thunder bus does the volume
     amp.connect(out);
     if (rIn){
       var send = ctx.createGain();
-      send.gain.value = 0.7;            // wetter — distance smears the tail
+      send.gain.value = 0.6;            // wet — distance smears the tail
       amp.connect(send); send.connect(rIn);
     }
-    var dur = 3.4 + (1 - I) * 3.4;      // long, slow rolls (~3.4-6.8s)
+    var dur = 3.4 + (1 - I) * 3.4;      // long, slow rolls (~3.4–6.8s)
 
-    // --- soft swell where a close strike would "crack" (low-passed, slow attack) ---
+    // --- soft swell where a close strike would "crack" (low-passed, slow attack >= ~220ms) ---
     (function(){
       var s = ctx.createBufferSource(); s.buffer = brB; s.loop = true;
       s.playbackRate.value = 0.8 + Math.random() * 0.3;
@@ -284,10 +510,10 @@
       var ga = ctx.createGain();
       var peak = 0.12 + prox * 0.22;
       ga.gain.setValueAtTime(0.0001, when);
-      ga.gain.exponentialRampToValueAtTime(peak, when + 0.13 + (1 - prox) * 0.10); // ~180-230ms onset (research: ~140-220ms fully clears the startle reflex)
-      ga.gain.exponentialRampToValueAtTime(0.0008, when + 0.6 + (1 - I) * 0.6);
+      ga.gain.exponentialRampToValueAtTime(peak, when + 0.22 + (1 - prox) * 0.18); // ~220–400ms onset
+      ga.gain.exponentialRampToValueAtTime(0.0008, when + 0.7 + (1 - I) * 0.7);
       s.connect(lp); lp.connect(ga); ga.connect(amp);
-      s.start(when); s.stop(when + 1.4);
+      s.start(when); s.stop(when + 1.6);
     })();
 
     // --- the rolling rumble + echoes (the star of a relaxing storm) ---
@@ -299,15 +525,15 @@
         var s = ctx.createBufferSource(); s.buffer = brB; s.loop = true;
         s.playbackRate.value = 0.5 + Math.random() * 0.4;
         var lp = ctx.createBiquadFilter(); lp.type = 'lowpass';
-        lp.frequency.value = Math.max(70, 90 + prox * 160 - k * 12); // ~70-250Hz, darker per tap
+        lp.frequency.value = Math.max(70, 90 + prox * 160 - k * 12); // ~70–250Hz, darker per tap
         lp.Q.value = 0.3;
         var ga = ctx.createGain();
         var peak = (0.5 - k * 0.07) * (0.55 + (1 - I) * 0.5);
         if (peak < 0.05) peak = 0.05;
         ga.gain.setValueAtTime(0.0001, ts);
-        ga.gain.exponentialRampToValueAtTime(peak, ts + 0.12 + Math.random() * 0.12); // soft attack
+        ga.gain.exponentialRampToValueAtTime(peak, ts + 0.22 + Math.random() * 0.18); // >= ~220ms attack
         ga.gain.exponentialRampToValueAtTime(0.0006, ts + dur * (0.8 + Math.random() * 0.5));
-        // slow rolling tremolo (1-4Hz) — the soothing undulation
+        // slow rolling tremolo (1–4Hz) — the soothing undulation
         var lfo = ctx.createOscillator(); lfo.frequency.value = 1 + Math.random() * 3;
         var lg = ctx.createGain(); lg.gain.value = 0.18;
         lfo.connect(lg); lg.connect(ga.gain);
@@ -317,52 +543,24 @@
       })(k);
     }
 
-    // --- gentle sub weight (felt, not a thump) ---
+    // --- gentle sub weight (felt, not a thump) — slow onset ---
     (function(){
       var o = ctx.createOscillator(); o.type = 'sine';
       var f = 34 + prox * 20;
       o.frequency.setValueAtTime(f * 1.3, when);
-      o.frequency.exponentialRampToValueAtTime(f, when + 0.6);
+      o.frequency.exponentialRampToValueAtTime(f, when + 0.7);
       var ga = ctx.createGain();
       var peak = 0.10 + prox * 0.14;
       ga.gain.setValueAtTime(0.0001, when);
-      ga.gain.exponentialRampToValueAtTime(peak, when + 0.06);  // soft attack
-      ga.gain.exponentialRampToValueAtTime(0.0005, when + 1.8 + I * 0.6);
+      ga.gain.exponentialRampToValueAtTime(peak, when + 0.24);  // ~240ms (no thump)
+      ga.gain.exponentialRampToValueAtTime(0.0005, when + 1.9 + I * 0.6);
       o.connect(ga); ga.connect(amp);
-      o.start(when); o.stop(when + 2.8);
+      o.start(when); o.stop(when + 3.0);
     })();
   }
 
-  function bakeRecordedPlaceholder(){
-    try {
-      var OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
-      if (!OAC) return;
-      var sr = actx.sampleRate, secs = 6.5;
-      var oc = new OAC(2, Math.floor(sr * secs), sr);
-      var nB = makeNoise(oc, 3, false), brB = makeNoise(oc, 3, true);
-      var rev = oc.createConvolver(); rev.buffer = makeIR(oc, 3.6, 3.0);
-      var rg = oc.createGain(); rg.gain.value = 0.9; rev.connect(rg); rg.connect(oc.destination);
-      renderThunder(oc, oc.destination, rev, nB, brB, 0.4, 0.05);
-      oc.startRendering().then(function(buf){ bakedClip = buf; }).catch(function(){});
-    } catch(e){}
-  }
-
-  function playRecorded(intensity, when){
-    var clip = recordedClip || bakedClip;
-    if (!clip){ // not ready yet — don't drop the thunder, use live synth
-      renderThunder(actx, master, revIn, noiseBuf, brownBuf, intensity, when);
-      return;
-    }
-    var s = actx.createBufferSource(); s.buffer = clip;
-    s.playbackRate.value = 0.85 + intensity * 0.4;
-    var ga = actx.createGain(); ga.gain.value = 0.4 + intensity * 0.7;
-    var send = actx.createGain(); send.gain.value = 0.45;
-    s.connect(ga); ga.connect(master); ga.connect(send); send.connect(revIn);
-    s.start(when);
-  }
-
   /* ============================================================
-     4. Lightning (visual) — drawn forked bolts, the star of the show
+     5. Lightning (visual) — drawn forked bolts, the star of the show
      ============================================================ */
 
   var bolts = [];
@@ -447,8 +645,44 @@
   }
 
   /* ============================================================
-     5. Sky + meter + main loop
+     6. Sky + meter + main loop
      ============================================================ */
+
+  // A small, dim, warm-pale moon at the given phase (0 new … 0.5 full). Drawn, not a photo,
+  // so it costs ~nothing and keeps the single-file / offline guarantee. Kept gentle on purpose.
+  function drawMoon(cx, cy, r, phase, alpha){
+    var theta = phase * 2 * Math.PI;
+    var lit = (1 - Math.cos(theta)) / 2;                 // illuminated fraction 0..1
+
+    // soft outer glow, scaled by how much is lit (a new moon barely glows)
+    var glowA = (0.05 + 0.18 * lit) * alpha;
+    var gr = g.createRadialGradient(cx, cy, r * 0.5, cx, cy, r * 2.8);
+    gr.addColorStop(0, 'rgba(228,228,210,' + glowA + ')');
+    gr.addColorStop(1, 'rgba(228,228,210,0)');
+    g.fillStyle = gr;
+    g.beginPath(); g.arc(cx, cy, r * 2.8, 0, Math.PI * 2); g.fill();
+
+    g.save();
+    g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2); g.clip();
+    g.fillStyle = 'rgba(150,156,176,' + (0.12 * alpha) + ')';   // faint unlit body
+    g.fillRect(cx - r, cy - r, 2 * r, 2 * r);
+
+    g.fillStyle = 'rgba(233,233,216,' + (0.9 * alpha) + ')';    // warm pale lit side
+    var waxing  = phase <= 0.5;
+    var gibbous = Math.cos(theta) < 0;
+    var rx = Math.abs(r * Math.cos(theta));
+    g.beginPath();
+    if (waxing){
+      g.arc(cx, cy, r, -Math.PI/2, Math.PI/2, false);          // right limb, top→bottom
+      g.ellipse(cx, cy, rx, r, 0, Math.PI/2, -Math.PI/2, !gibbous);
+    } else {
+      g.arc(cx, cy, r, Math.PI/2, -Math.PI/2, false);          // left limb, bottom→top
+      g.ellipse(cx, cy, rx, r, 0, -Math.PI/2, Math.PI/2, !gibbous);
+    }
+    g.closePath();
+    g.fill();
+    g.restore();
+  }
 
   function drawSky(t){
     var grd = g.createLinearGradient(0, 0, 0, H);
@@ -458,9 +692,26 @@
     g.fillStyle = grd; g.fillRect(0, 0, W, H);
     for (var i = 0; i < stars.length; i++){
       var st = stars[i];
-      var tw = st.a * (0.7 + 0.3 * Math.sin(t * 0.0012 + st.tw));
-      g.fillStyle = 'rgba(200,210,235,' + tw + ')';
-      g.fillRect(st.x, st.y, st.r, st.r);
+      var tw = st.a * (0.65 + 0.35 * Math.sin(t * 0.0012 + st.tw));
+      if (tw <= 0) continue;
+      if (st.hero){
+        var rad = st.r + 0.6;
+        var gs = g.createRadialGradient(st.x, st.y, 0, st.x, st.y, rad * 3.2);
+        gs.addColorStop(0,   'rgba(226,233,255,' + Math.min(1, tw * 1.1) + ')');
+        gs.addColorStop(0.4, 'rgba(210,222,250,' + (tw * 0.5) + ')');
+        gs.addColorStop(1,   'rgba(210,222,250,0)');
+        g.fillStyle = gs;
+        g.beginPath(); g.arc(st.x, st.y, rad * 3.2, 0, Math.PI * 2); g.fill();
+        g.fillStyle = 'rgba(236,242,255,' + Math.min(1, tw * 1.2) + ')';
+        g.beginPath(); g.arc(st.x, st.y, rad * 0.7, 0, Math.PI * 2); g.fill();
+      } else {
+        g.fillStyle = 'rgba(212,222,245,' + tw + ')';
+        g.beginPath(); g.arc(st.x, st.y, Math.max(0.6, st.r), 0, Math.PI * 2); g.fill();
+      }
+    }
+    if (state.moon){
+      var mr = Math.max(20, Math.min(44, Math.min(W, H) * 0.05));
+      drawMoon(W * 0.80, Math.max(mr * 1.6, H * 0.20), mr, moonPhase, 1);
     }
   }
 
@@ -476,6 +727,10 @@
   }
 
   var raf = null, strikeTimer = null, lastT = 0;
+  var lastInteract = 0;        // performance.now() of last pointer/key activity
+  var dim = 0;                 // 0..1 black overlay from inactivity (audio keeps playing)
+  var sleeping = false;        // sleep-timer fade in progress
+  var sleepVisual = 0;         // 0..1 visual fade during sleep
 
   function frame(ts){
     if (!state.running) return;
@@ -485,7 +740,7 @@
 
     drawSky(ts);
 
-    // sky glow: bolt charge decays; live thunder adds a gentle audio-driven pulse
+    // sky glow: bolt charge decays; live thunder adds a gentle audio-driven pulse (rain never glows)
     illum = Math.max(0, illum - dt * 1.6);
     var rms = 0;
     if (analyser){
@@ -517,68 +772,152 @@
     }
 
     drawMeter(rms);
+
+    // --- dim-to-black after inactivity (kills blue light; audio continues) ---
+    var idleMs = ts - lastInteract;
+    var dimTarget = (idleMs > 30000) ? 1 : 0;
+    var dRate = (dimTarget > dim) ? 0.45 : 1.6;   // fade out slowly, restore faster
+    dim += (dimTarget - dim) * Math.min(1, dt * dRate);
+    if (dim < 0.001) dim = 0;
+
+    // --- sleep-timer visual fade (audio is ramped separately) ---
+    if (sleeping) sleepVisual += (1 - sleepVisual) * Math.min(1, dt * 0.5);
+
+    var black = Math.max(dim, sleepVisual);
+    if (black > 0.001){
+      g.fillStyle = 'rgba(0,0,0,' + Math.min(1, black) + ')';
+      g.fillRect(0, 0, W, H);
+    }
+    // the little "night night, love you" stays while running, and fades out as the screen dims
+    nnlyEl.style.opacity = String(0.6 * (1 - Math.min(1, black)));
+
+    if (sleeping && sleepVisual > 0.995){
+      Storm.stop();              // fully faded — end the scene
+      return;
+    }
+
     raf = requestAnimationFrame(frame);
   }
 
   /* ============================================================
-     6. Strike scheduler  +  the storm "scene"
+     7. Strike scheduler + sleep timer + the storm "scene"
      ============================================================ */
 
-  function fireThunder(I, delay){
+  // Thunder character is FIXED at the researched preset (THUNDER_I); the slider only sets the
+  // bus volume. So strikes look/space the same; the slider just makes them louder or softer.
+  function fireThunder(delay){
     if (!actx) return;
     var when = actx.currentTime + Math.max(0, delay);
-    if (state.engine === 'recorded') playRecorded(I, when);
-    else renderThunder(actx, master, revIn, noiseBuf, brownBuf, I, when);
+    renderThunder(actx, thunderBus, revIn, brownBuf, THUNDER_I, when);
   }
 
   function autoStrike(){
-    if (!state.running) return;
-    var I = state.intensity;
-    spawnBolt(I);
-    // flash first, rumble after — distance grows as it gets calmer
-    var delay = (1.2 + (1 - I) * 4) * (0.7 + Math.random() * 0.6);
-    fireThunder(I, delay);
-    // schedule the next one
-    var gap = (4 + (1 - I) * 16) * (0.7 + Math.random() * 0.8);
+    if (!state.running || !state.lightning) { strikeTimer = null; return; }
+    spawnBolt(THUNDER_I);
+    // flash first, rumble after — the pre-signal lead reduces startle
+    var delay = (1.2 + (1 - THUNDER_I) * 4) * (0.7 + Math.random() * 0.6);
+    fireThunder(delay);
+    // schedule the next one (calm, researched spacing)
+    var gap = (4 + (1 - THUNDER_I) * 16) * (0.7 + Math.random() * 0.8);
     if (REDUCED) gap *= 1.6;
     strikeTimer = setTimeout(autoStrike, gap * 1000);
   }
 
-  // Manual strike (tap the sky / spacebar): instant bolt + near thunder.
+  // Manual strike (tap the sky / spacebar): instant bolt + thunder at the current volume.
+  // Respects the Lightning toggle — with lightning OFF the sky stays calm (no bolt, no thunder).
   function manualStrike(){
-    if (!state.running) return;
-    var I = state.intensity;
-    spawnBolt(Math.min(1, I + 0.2));
-    fireThunder(Math.min(0.8, I + 0.2), 0.35 + Math.random() * 0.4);
+    if (!state.running || !state.lightning) return;
+    spawnBolt(THUNDER_I);
+    fireThunder(0.35 + Math.random() * 0.4);
   }
 
-  // The scene seam — add rain/ocean as siblings later.
+  var sleepTimerId = null;
+  function setSleepTimer(val){
+    state.timer = (val === '15' || val === '30' || val === '60') ? val : 'off';
+    if (sleepTimerId){ clearTimeout(sleepTimerId); sleepTimerId = null; }
+    sleeping = false; sleepVisual = 0;
+    if (state.timer !== 'off' && state.running){
+      var mins = parseInt(state.timer, 10);
+      sleepTimerId = setTimeout(beginSleepFade, mins * 60000);
+    }
+  }
+  function beginSleepFade(){
+    sleeping = true;             // frame() eases the visual to black
+    if (actx && master){        // gently ramp audio to silence over ~8s
+      var now = actx.currentTime;
+      master.gain.cancelScheduledValues(now);
+      master.gain.setValueAtTime(Math.max(0.0001, master.gain.value), now);
+      master.gain.linearRampToValueAtTime(0.0001, now + 8);
+    }
+  }
+
+  // The scene seam — rain/ocean stay swappable siblings.
   var Storm = {
     name: 'storm',
     start: function(){
       initAudio();
       if (actx.state === 'suspended') actx.resume();
+      moonPhase = computeMoonPhase();
       state.running = true;
       lastT = 0;
+      lastInteract = (window.performance && performance.now) ? performance.now() : 0;
+      dim = 0; sleeping = false; sleepVisual = 0;
       raf = requestAnimationFrame(frame);
-      autoStrike();
+      if (state.rain) startRain();
+      if (state.lightning) autoStrike();
+      if (state.timer !== 'off') setSleepTimer(state.timer);
     },
     stop: function(){
       state.running = false;
-      if (raf) cancelAnimationFrame(raf), raf = null;
-      if (strikeTimer) clearTimeout(strikeTimer), strikeTimer = null;
+      if (raf) { cancelAnimationFrame(raf); raf = null; }
+      if (strikeTimer) { clearTimeout(strikeTimer); strikeTimer = null; }
+      if (sleepTimerId) { clearTimeout(sleepTimerId); sleepTimerId = null; }
+      stopRain();
     }
   };
 
   /* ============================================================
-     7. Controls + lifecycle
+     8. Controls + lifecycle
      ============================================================ */
 
-  var beginEl = document.getElementById('begin');
-  var slider  = document.getElementById('intensity');
-  var engSyn  = document.getElementById('eng-synth');
-  var engRec  = document.getElementById('eng-rec');
-  var muteBtn = document.getElementById('mute');
+  var beginEl    = document.getElementById('begin');
+  var rainTog    = document.getElementById('rain-toggle');
+  var rainLvl    = document.getElementById('rain-level');
+  var lightTog   = document.getElementById('lightning-toggle');
+  var lightLvl   = document.getElementById('lightning-level');
+  var rainColSel = document.getElementById('rain-color');
+  var sleepSel   = document.getElementById('sleep');
+  var moonTog    = document.getElementById('moon-toggle');
+  var quietBtn   = document.getElementById('quiet');
+
+  // Reflect (possibly restored) state into the controls before the scene starts.
+  function syncUI(){
+    rainTog.classList.toggle('on', state.rain);
+    rainTog.setAttribute('aria-pressed', String(state.rain));
+    rainLvl.value = Math.round(state.rainLevel * 100);
+    rainColSel.value = state.rainColor;
+    lightTog.classList.toggle('on', state.lightning);
+    lightTog.setAttribute('aria-pressed', String(state.lightning));
+    lightLvl.value = Math.round(state.lightningLevel * 100);
+    sleepSel.value = state.timer;
+    moonTog.classList.toggle('on', state.moon);
+    moonTog.setAttribute('aria-pressed', String(state.moon));
+    quietBtn.classList.toggle('muted', state.muted);
+    quietBtn.textContent = state.muted ? 'Sound on' : 'Quiet everything';
+    quietBtn.setAttribute('aria-pressed', String(state.muted));
+  }
+
+  function applyMute(){
+    if (actx && master){
+      var now = actx.currentTime;
+      master.gain.cancelScheduledValues(now);
+      master.gain.setValueAtTime(Math.max(0.0001, master.gain.value), now);
+      master.gain.linearRampToValueAtTime(state.muted ? 0.0001 : 1, now + 0.05); // click-free instant stop
+    }
+    quietBtn.classList.toggle('muted', state.muted);
+    quietBtn.textContent = state.muted ? 'Sound on' : 'Quiet everything';
+    quietBtn.setAttribute('aria-pressed', String(state.muted));
+  }
 
   function begin(){
     if (state.running) return;
@@ -590,43 +929,89 @@
     if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); begin(); }
   });
 
-  slider.addEventListener('input', function(){ state.intensity = (+slider.value) / 100; });
+  rainTog.addEventListener('click', function(){
+    state.rain = !state.rain;
+    rainTog.classList.toggle('on', state.rain);
+    rainTog.setAttribute('aria-pressed', String(state.rain));
+    if (state.running){ state.rain ? startRain() : stopRain(); }
+    saveState();
+  });
+  rainLvl.addEventListener('input', function(){
+    setRainLevel((+rainLvl.value) / 100);
+    saveState();
+  });
+  rainColSel.addEventListener('change', function(){
+    setRainColor(rainColSel.value);
+    saveState();
+  });
 
-  function setEngine(eng){
-    state.engine = eng;
-    engSyn.classList.toggle('on', eng === 'synth');
-    engRec.classList.toggle('on', eng === 'recorded');
-  }
-  engSyn.addEventListener('click', function(){ setEngine('synth'); });
-  engRec.addEventListener('click', function(){ setEngine('recorded'); });
+  lightTog.addEventListener('click', function(){
+    state.lightning = !state.lightning;
+    lightTog.classList.toggle('on', state.lightning);
+    lightTog.setAttribute('aria-pressed', String(state.lightning));
+    if (state.running){
+      if (state.lightning){ if (!strikeTimer) autoStrike(); }
+      else if (strikeTimer){ clearTimeout(strikeTimer); strikeTimer = null; }
+    }
+    saveState();
+  });
+  lightLvl.addEventListener('input', function(){
+    setLightningLevel((+lightLvl.value) / 100, false);   // real-time thunder volume
+    saveState();
+  });
 
-  muteBtn.addEventListener('click', function(){
+  sleepSel.addEventListener('change', function(){
+    setSleepTimer(sleepSel.value);
+    saveState();
+  });
+
+  moonTog.addEventListener('click', function(){
+    state.moon = !state.moon;                 // purely visual; drawSky picks it up next frame
+    moonTog.classList.toggle('on', state.moon);
+    moonTog.setAttribute('aria-pressed', String(state.moon));
+    saveState();
+  });
+
+  quietBtn.addEventListener('click', function(){
     state.muted = !state.muted;
-    if (master) master.gain.value = state.muted ? 0 : 1;
-    muteBtn.classList.toggle('muted', state.muted);
-    muteBtn.textContent = state.muted ? 'Sound off' : 'Sound on';
-    muteBtn.setAttribute('aria-pressed', String(state.muted));
+    applyMute();
+    saveState();
   });
 
-  // Tap the sky for your own bolt (ignores taps that land on the controls).
-  canvas.addEventListener('pointerdown', function(){ if (state.running) manualStrike(); });
+  // Interaction = stay awake (and, on a lit screen, make your own bolt).
+  function noteInteraction(){ lastInteract = (window.performance && performance.now) ? performance.now() : lastT; }
+  canvas.addEventListener('pointerdown', function(){
+    if (!state.running) return;
+    var wasDim = dim > 0.35;
+    noteInteraction();
+    if (!wasDim) manualStrike();   // a tap on a dimmed screen just wakes it
+  });
+  window.addEventListener('pointermove', function(){ if (state.running) noteInteraction(); });
   window.addEventListener('keydown', function(e){
-    if (e.code === 'Space' && state.running){ e.preventDefault(); manualStrike(); }
-  });
-
-  // Be a good citizen: pause when the tab is hidden (battery + no runaway timers).
-  document.addEventListener('visibilitychange', function(){
-    if (!actx) return;
-    if (document.hidden){
-      if (raf) cancelAnimationFrame(raf), raf = null;
-      if (strikeTimer) clearTimeout(strikeTimer), strikeTimer = null;
-    } else if (state.running){
-      lastT = 0;
-      raf = requestAnimationFrame(frame);
-      autoStrike();
+    if (e.code === 'Space' && state.running){
+      e.preventDefault();
+      var wasDim = dim > 0.35;
+      noteInteraction();
+      if (!wasDim) manualStrike();
     }
   });
 
+  // Be a good citizen: pause visuals + strikes when the tab is hidden (rain audio continues).
+  document.addEventListener('visibilitychange', function(){
+    if (!actx) return;
+    if (document.hidden){
+      if (raf) { cancelAnimationFrame(raf); raf = null; }
+      if (strikeTimer) { clearTimeout(strikeTimer); strikeTimer = null; }
+    } else if (state.running){
+      lastT = 0;
+      lastInteract = (window.performance && performance.now) ? performance.now() : 0;
+      raf = requestAnimationFrame(frame);
+      if (state.lightning && !strikeTimer) autoStrike();
+    }
+  });
+
+  loadState();
+  syncUI();
   resize();
   // Draw one calm frame behind the overlay so it isn't pure black before "begin".
   drawSky(0);
