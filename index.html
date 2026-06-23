@@ -89,15 +89,15 @@
   #panel .group{ display:flex; align-items:center; gap:.5rem; }
   #panel label{ font-size:.8rem; color:var(--ink-dim); white-space:nowrap; }
   #panel .level{ width:clamp(90px,20vw,150px); accent-color:var(--accent); height:1.4rem; }
-  .toggle, #sleep, #rain-color, #quiet{
+  .toggle, #sleep, #rain-color, #quiet, #dark{
     font:inherit; font-size:.82rem; color:var(--ink); cursor:pointer; min-height:2.2rem;
     background:transparent; border:1px solid var(--panel-line); border-radius:10px; padding:.5rem .8rem;
   }
   .toggle{ color:var(--ink-dim); }
   .toggle.on{ background:rgba(159,192,255,0.16); color:var(--ink); }
   #sleep, #rain-color{ color:var(--ink-dim); -webkit-appearance:none; appearance:none; }
-  #quiet{ font-weight:500; }
-  #quiet.muted{ color:var(--ink-dim); background:rgba(159,192,255,0.10); }
+  #quiet, #dark{ font-weight:500; }
+  #quiet.muted, #dark.darkened{ color:var(--ink-dim); background:rgba(159,192,255,0.10); }
   #panel .cap{
     flex-basis:100%; text-align:center; font-size:.72rem; line-height:1.35;
     color:var(--ink-dim); padding:0 .2rem;
@@ -133,7 +133,8 @@
       </select>
     </div>
     <button id="moon-toggle" class="toggle" type="button" aria-pressed="false">fucking moon</button>
-    <button id="quiet" type="button" aria-pressed="false">Quiet everything</button>
+    <button id="quiet" type="button" aria-pressed="false">everything quiet</button>
+    <button id="dark" type="button" aria-pressed="false">everything dark</button>
     <div class="cap">tap the sky for a bolt</div>
   </div>
 
@@ -344,7 +345,8 @@
     // through it, so the slider scales the whole event in real time. It also feeds the analyser
     // side-tap, so the steady rain bed does NOT light up the sky-glow / thunder meter.
     thunderBus = actx.createGain();
-    thunderBus.gain.value = lightningVol(state.lightningLevel);
+    // start silent when lightning is OFF, so a stray reverb tail can never leak through
+    thunderBus.gain.value = state.lightning ? lightningVol(state.lightningLevel) : 0.0001;
     thunderBus.connect(master);
     thunderBus.connect(analyser);
 
@@ -399,10 +401,12 @@
   function setLightningLevel(level, ramp){
     state.lightningLevel = clamp01(level);
     if (!thunderBus) return;
+    // with lightning OFF the bus stays silenced — the slider stores the level but never un-silences
+    var target = state.lightning ? lightningVol(state.lightningLevel) : 0.0001;
     var now = actx.currentTime;
     thunderBus.gain.cancelScheduledValues(now);
     thunderBus.gain.setValueAtTime(Math.max(0.0001, thunderBus.gain.value), now);
-    thunderBus.gain.linearRampToValueAtTime(lightningVol(state.lightningLevel), now + (ramp ? 0.3 : 0.05));
+    thunderBus.gain.linearRampToValueAtTime(target, now + (ramp ? 0.3 : 0.05));
   }
 
   // Build one rain "instance" for a colour, on its own fade gain into the rain bus. Two instances
@@ -664,6 +668,9 @@
 
     g.save();
     g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2); g.clip();
+    // opaque disc first, so background stars never bleed THROUGH the semi-transparent moon body
+    g.fillStyle = 'rgba(6,8,15,' + alpha + ')';
+    g.fillRect(cx - r, cy - r, 2 * r, 2 * r);
     g.fillStyle = 'rgba(150,156,176,' + (0.12 * alpha) + ')';   // faint unlit body
     g.fillRect(cx - r, cy - r, 2 * r, 2 * r);
 
@@ -709,9 +716,9 @@
         g.beginPath(); g.arc(st.x, st.y, Math.max(0.6, st.r), 0, Math.PI * 2); g.fill();
       }
     }
-    if (state.moon){
+    if (moonV > 0.001){
       var mr = Math.max(20, Math.min(44, Math.min(W, H) * 0.05));
-      drawMoon(W * 0.80, Math.max(mr * 1.6, H * 0.20), mr, moonPhase, 1);
+      drawMoon(W * 0.80, Math.max(mr * 1.6, H * 0.20), mr, moonPhase, moonV);
     }
   }
 
@@ -729,8 +736,12 @@
   var raf = null, strikeTimer = null, lastT = 0;
   var lastInteract = 0;        // performance.now() of last pointer/key activity
   var dim = 0;                 // 0..1 black overlay from inactivity (audio keeps playing)
+  var darkOn = false;          // "everything dark" manual blackout (button; not persisted)
+  var darkV = 0;               // 0..1 eased value for the manual blackout
   var sleeping = false;        // sleep-timer fade in progress
   var sleepVisual = 0;         // 0..1 visual fade during sleep
+  var moonV = 0;               // 0..1 eased moon opacity — fades in/out on toggle
+  var MOON_FADE = 0.7;         // moon fade rate (~3s to full; gentle, like the timer fade)
 
   function frame(ts){
     if (!state.running) return;
@@ -780,10 +791,21 @@
     dim += (dimTarget - dim) * Math.min(1, dt * dRate);
     if (dim < 0.001) dim = 0;
 
+    // --- "everything dark" manual blackout (button; audio keeps playing, like the timeout) ---
+    var darkTarget = darkOn ? 1 : 0;
+    var dkRate = (darkTarget > darkV) ? 0.8 : 1.6;   // fade to black, restore a touch faster
+    darkV += (darkTarget - darkV) * Math.min(1, dt * dkRate);
+    if (darkV < 0.001) darkV = 0;
+
+    // --- moon fade in/out on toggle (gentle, like the timer fade) ---
+    var moonTarget = state.moon ? 1 : 0;
+    moonV += (moonTarget - moonV) * Math.min(1, dt * MOON_FADE);
+    if (moonV < 0.001) moonV = 0; else if (moonV > 0.999) moonV = 1;
+
     // --- sleep-timer visual fade (audio is ramped separately) ---
     if (sleeping) sleepVisual += (1 - sleepVisual) * Math.min(1, dt * 0.5);
 
-    var black = Math.max(dim, sleepVisual);
+    var black = Math.max(dim, darkV, sleepVisual);
     if (black > 0.001){
       g.fillStyle = 'rgba(0,0,0,' + Math.min(1, black) + ')';
       g.fillRect(0, 0, W, H);
@@ -861,7 +883,8 @@
       state.running = true;
       lastT = 0;
       lastInteract = (window.performance && performance.now) ? performance.now() : 0;
-      dim = 0; sleeping = false; sleepVisual = 0;
+      dim = 0; darkOn = false; darkV = 0; sleeping = false; sleepVisual = 0;
+      moonV = state.moon ? 1 : 0;        // match the toggle at start; fade only on later toggles
       raf = requestAnimationFrame(frame);
       if (state.rain) startRain();
       if (state.lightning) autoStrike();
@@ -889,6 +912,7 @@
   var sleepSel   = document.getElementById('sleep');
   var moonTog    = document.getElementById('moon-toggle');
   var quietBtn   = document.getElementById('quiet');
+  var darkBtn    = document.getElementById('dark');
 
   // Reflect (possibly restored) state into the controls before the scene starts.
   function syncUI(){
@@ -903,7 +927,7 @@
     moonTog.classList.toggle('on', state.moon);
     moonTog.setAttribute('aria-pressed', String(state.moon));
     quietBtn.classList.toggle('muted', state.muted);
-    quietBtn.textContent = state.muted ? 'Sound on' : 'Quiet everything';
+    quietBtn.textContent = state.muted ? 'Sound on' : 'everything quiet';
     quietBtn.setAttribute('aria-pressed', String(state.muted));
   }
 
@@ -915,7 +939,7 @@
       master.gain.linearRampToValueAtTime(state.muted ? 0.0001 : 1, now + 0.05); // click-free instant stop
     }
     quietBtn.classList.toggle('muted', state.muted);
-    quietBtn.textContent = state.muted ? 'Sound on' : 'Quiet everything';
+    quietBtn.textContent = state.muted ? 'Sound on' : 'everything quiet';
     quietBtn.setAttribute('aria-pressed', String(state.muted));
   }
 
@@ -949,6 +973,15 @@
     state.lightning = !state.lightning;
     lightTog.classList.toggle('on', state.lightning);
     lightTog.setAttribute('aria-pressed', String(state.lightning));
+    // gate the thunder bus: OFF instantly silences any in-flight rumble + reverb tail (click-free,
+    // 60 ms) — same trick "everything quiet" uses on the master; ON restores it to the slider level.
+    if (actx && thunderBus){
+      var now = actx.currentTime;
+      thunderBus.gain.cancelScheduledValues(now);
+      thunderBus.gain.setValueAtTime(Math.max(0.0001, thunderBus.gain.value), now);
+      thunderBus.gain.linearRampToValueAtTime(
+        state.lightning ? lightningVol(state.lightningLevel) : 0.0001, now + 0.06);
+    }
     if (state.running){
       if (state.lightning){ if (!strikeTimer) autoStrike(); }
       else if (strikeTimer){ clearTimeout(strikeTimer); strikeTimer = null; }
@@ -966,7 +999,7 @@
   });
 
   moonTog.addEventListener('click', function(){
-    state.moon = !state.moon;                 // purely visual; drawSky picks it up next frame
+    state.moon = !state.moon;                 // purely visual; frame() eases moonV toward it (fade)
     moonTog.classList.toggle('on', state.moon);
     moonTog.setAttribute('aria-pressed', String(state.moon));
     saveState();
@@ -978,11 +1011,20 @@
     saveState();
   });
 
+  // "everything dark": black out the canvas (stars, moon, bolts, glow) while audio keeps playing —
+  // the same visual blackout the inactivity timeout produces, but on demand. Not persisted.
+  darkBtn.addEventListener('click', function(){
+    darkOn = !darkOn;
+    darkBtn.classList.toggle('darkened', darkOn);
+    darkBtn.textContent = darkOn ? 'show sky' : 'everything dark';
+    darkBtn.setAttribute('aria-pressed', String(darkOn));
+  });
+
   // Interaction = stay awake (and, on a lit screen, make your own bolt).
   function noteInteraction(){ lastInteract = (window.performance && performance.now) ? performance.now() : lastT; }
   canvas.addEventListener('pointerdown', function(){
     if (!state.running) return;
-    var wasDim = dim > 0.35;
+    var wasDim = dim > 0.35 || darkOn;   // a tap on a dark/dimmed sky never fires a hidden bolt
     noteInteraction();
     if (!wasDim) manualStrike();   // a tap on a dimmed screen just wakes it
   });
@@ -990,7 +1032,7 @@
   window.addEventListener('keydown', function(e){
     if (e.code === 'Space' && state.running){
       e.preventDefault();
-      var wasDim = dim > 0.35;
+      var wasDim = dim > 0.35 || darkOn;   // a tap on a dark/dimmed sky never fires a hidden bolt
       noteInteraction();
       if (!wasDim) manualStrike();
     }
@@ -1011,6 +1053,7 @@
   });
 
   loadState();
+  moonV = state.moon ? 1 : 0;   // so a persisted-on moon shows in the calm pre-begin sky
   syncUI();
   resize();
   // Draw one calm frame behind the overlay so it isn't pure black before "begin".
