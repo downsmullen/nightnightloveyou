@@ -735,6 +735,8 @@
 
   var raf = null, strikeTimer = null, lastT = 0;
   var lastInteract = 0;        // performance.now() of last pointer/key activity
+  var idleTick = null;         // ~1s setTimeout handle while idle-black (throttled loop)
+  var idleBlacked = false;     // painted the final true-black frame of this idle spell
   var dim = 0;                 // 0..1 black overlay from inactivity (audio keeps playing)
   var darkOn = false;          // "everything dark" manual blackout (button; not persisted)
   var darkV = 0;               // 0..1 eased value for the manual blackout
@@ -748,6 +750,27 @@
     var dt = lastT ? (ts - lastT) / 1000 : 0;
     lastT = ts;
     if (dt > 0.1) dt = 0.1; // clamp after tab-switch etc.
+
+    // --- idle throttle: once the screen has fully faded to black (inactivity, or "everything
+    // dark"), stop repainting and tick ~1/s instead of every frame — an all-night run then costs
+    // ~nothing while the audio plays on. Interaction wakes the loop instantly (wakeLoop). The
+    // sleep-timer fade is excluded: it must run smoothly down to its Storm.stop().
+    var idleBlack = !sleeping &&
+        ((darkOn && darkV > 0.995) || (!darkOn && dim > 0.995 && ts - lastInteract > 30000));
+    if (idleBlack){
+      if (!idleBlacked){
+        g.fillStyle = '#000'; g.fillRect(0, 0, W, H);   // settle on one true-black frame
+        nnlyEl.style.opacity = '0';
+        idleBlacked = true;
+      }
+      raf = null;
+      idleTick = setTimeout(function(){
+        idleTick = null;
+        if (state.running && !document.hidden && !raf) raf = requestAnimationFrame(frame);
+      }, 1000);
+      return;
+    }
+    idleBlacked = false;
 
     drawSky(ts);
 
@@ -893,6 +916,7 @@
     stop: function(){
       state.running = false;
       if (raf) { cancelAnimationFrame(raf); raf = null; }
+      if (idleTick) { clearTimeout(idleTick); idleTick = null; }
       if (strikeTimer) { clearTimeout(strikeTimer); strikeTimer = null; }
       if (sleepTimerId) { clearTimeout(sleepTimerId); sleepTimerId = null; }
       stopRain();
@@ -1018,10 +1042,19 @@
     darkBtn.classList.toggle('darkened', darkOn);
     darkBtn.textContent = darkOn ? 'show sky' : 'everything dark';
     darkBtn.setAttribute('aria-pressed', String(darkOn));
+    wakeLoop();   // if the throttle had settled, fade back in right away, not on the next tick
   });
 
   // Interaction = stay awake (and, on a lit screen, make your own bolt).
-  function noteInteraction(){ lastInteract = (window.performance && performance.now) ? performance.now() : lastT; }
+  // wakeLoop breaks the idle throttle immediately so a touch never waits on the ~1s tick.
+  function wakeLoop(){
+    if (idleTick){ clearTimeout(idleTick); idleTick = null; }
+    if (state.running && !raf && !document.hidden) raf = requestAnimationFrame(frame);
+  }
+  function noteInteraction(){
+    lastInteract = (window.performance && performance.now) ? performance.now() : lastT;
+    wakeLoop();
+  }
   canvas.addEventListener('pointerdown', function(){
     if (!state.running) return;
     var wasDim = dim > 0.35 || darkOn;   // a tap on a dark/dimmed sky never fires a hidden bolt
@@ -1043,6 +1076,7 @@
     if (!actx) return;
     if (document.hidden){
       if (raf) { cancelAnimationFrame(raf); raf = null; }
+      if (idleTick) { clearTimeout(idleTick); idleTick = null; }
       if (strikeTimer) { clearTimeout(strikeTimer); strikeTimer = null; }
     } else if (state.running){
       lastT = 0;
