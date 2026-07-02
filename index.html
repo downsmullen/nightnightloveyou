@@ -14,9 +14,9 @@
      It must run by double-clicking it offline. The file is the 50-year bet, not the host.
    - The VISUAL scene stands on its own with the sound off (accessibility / muted-friendly).
    - Drawn forked bolts are the star; the sky glow is gentle and capped — never a harsh strobe.
-   - Rare anvil CRAWLERS ("spider lightning") are the second lightning form: a dim horizontal
-     channel that visibly crawls across the upper sky, sprouting veins as it goes. Slow and
-     soft on purpose — nothing strikes, nothing cracks. The C key fires one by hand.
+   - Bolts DRAW themselves: a bright white leading edge wanders down the channel (most bolts
+     ~0.1–0.2s; the occasional lazy one takes ~0.5–0.9s), branches unfurl as it passes, the
+     whole channel flashes on arrival, then cools from white toward its tint as it fades.
    - Calm by default: opens as RAIN ONLY (lightning one tap away). Children are the audience —
      thunder is opt-in, slow-onset, and distant; nothing ever starts with a sharp transient.
 
@@ -138,7 +138,7 @@
     <button id="moon-toggle" class="toggle" type="button" aria-pressed="false">fucking moon</button>
     <button id="quiet" type="button" aria-pressed="false">everything quiet</button>
     <button id="dark" type="button" aria-pressed="false">everything dark</button>
-    <div class="cap">tap the sky for a bolt · press C for a crawler</div>
+    <div class="cap">tap the sky for a bolt</div>
   </div>
 
   <div id="begin" role="button" tabindex="0" aria-label="tap to begin">
@@ -600,6 +600,13 @@
     return {pts:pts, branches:branches};
   }
 
+  // Storybook palette — mostly ice-blue and warm-white, the odd lavender (never red:
+  // photosensitivity, and it reads as fire, not lightning).
+  function pickTint(){
+    var r = Math.random();
+    return r < 0.5 ? '170,200,255' : (r < 0.85 ? '222,228,255' : '198,186,255');
+  }
+
   function spawnBolt(I){
     var x0 = W * (0.12 + Math.random() * 0.76);
     var y0 = -12;
@@ -607,106 +614,40 @@
     var y1 = H * (0.5 + Math.random() * 0.45);
     var disp = (38 + Math.random()*60) * (0.6 + I*0.8);
     var main = jagged(x0, y0, x1, y1, disp, 6, 0.34);
+    var n = main.pts.length;
+    // branches keep their attach fraction along the channel, so each one unfurls
+    // just as the leader passes it on the way down
     var subs = [];
     for (var i = 0; i < main.branches.length; i++){
       var br = main.branches[i];
-      subs.push(jagged(br.x0, br.y0, br.x1, br.y1, 16, 4, 0).pts);
+      var best = 0, bd = Infinity;
+      for (var j = 0; j < n; j++){
+        var ddx = main.pts[j].x - br.x0, ddy = main.pts[j].y - br.y0;
+        var dd = ddx*ddx + ddy*ddy;
+        if (dd < bd){ bd = dd; best = j; }
+      }
+      subs.push({ pts: jagged(br.x0, br.y0, br.x1, br.y1, 16, 4, 0).pts, at: best / (n - 1) });
     }
+    // most bolts are quick; the occasional lazy one wanders down slowly and lingers
+    var lazy = Math.random() < 0.22;
     var b = {
       main: main.pts,
       subs: subs,
+      age: 0,
+      drawT: lazy ? 0.5 + Math.random()*0.4 : 0.10 + Math.random()*0.12,   // leader travel time
+      done: false,                                // flips true on arrival (the return stroke)
       life: 1,
-      decay: 1 / (0.16 + Math.random()*0.22),   // ~0.16–0.38s visible
+      decay: 1 / (lazy ? (0.5 + Math.random()*0.5) : (0.16 + Math.random()*0.22)),
       width: 1.3 + I*2.2,
       bright: 0.65 + I*0.35,
       flicker: (Math.random() < 0.5) ? (1 + Math.floor(Math.random()*2)) : 0,
       flickerT: 0,
-      tint: (Math.random() < 0.5) ? '170,200,255' : '222,228,255'
+      tint: pickTint()
     };
     bolts.push(b);
-    illum = Math.min(illumMax, illum + b.bright * (REDUCED ? 0.25 : 0.5));
+    // a small glow at launch; the bigger swell lands with the return stroke (frame loop)
+    illum = Math.min(illumMax, illum + b.bright * (REDUCED ? 0.25 : 0.5) * 0.5);
     return b;
-  }
-
-  function drawBolt(b){
-    var alpha = Math.max(0, b.life) * b.bright;
-    if (alpha <= 0) return;
-    g.lineCap = 'round'; g.lineJoin = 'round';
-    // wide soft glow → thin white-hot core
-    var passes = [[b.width*7, 0.05], [b.width*3.2, 0.11], [b.width*1.6, 0.5], [b.width*0.7, 1.0]];
-    for (var p = 0; p < passes.length; p++){
-      g.beginPath();
-      var pts = b.main, i;
-      g.moveTo(pts[0].x, pts[0].y);
-      for (i = 1; i < pts.length; i++) g.lineTo(pts[i].x, pts[i].y);
-      for (var s = 0; s < b.subs.length; s++){
-        var sp = b.subs[s];
-        g.moveTo(sp[0].x, sp[0].y);
-        for (i = 1; i < sp.length; i++) g.lineTo(sp[i].x, sp[i].y);
-      }
-      g.lineWidth = passes[p][0];
-      var col = (p === passes.length - 1) ? '255,255,255' : b.tint;
-      g.strokeStyle = 'rgba(' + col + ',' + (passes[p][1] * alpha) + ')';
-      g.stroke();
-    }
-  }
-
-  /* ---- anvil crawlers ("spider lightning") ----
-     The second lightning form: a dim, mostly-horizontal channel that visibly CRAWLS across the
-     upper sky, sprouting downward veins as the head advances — then lingers a beat and fades.
-     Slow and soft on purpose: it is the calm, distant form (nothing strikes, no white-hot core,
-     small capped glow). The scheduler keeps them rare so a crawler stays an event. */
-
-  var crawlers = [];
-  var VEIN_GROW = 0.22;   // each vein unfurls over this fraction of the main crawl
-
-  function spawnCrawler(){
-    var ltr = Math.random() < 0.5;                       // crawl left→right or right→left
-    var x0 = W * (ltr ? 0.04 + Math.random()*0.10 : 0.86 + Math.random()*0.10);
-    var x1 = W * (ltr ? 0.82 + Math.random()*0.14 : 0.04 + Math.random()*0.12);
-    var y0 = H * (0.10 + Math.random()*0.16);            // rides the upper sky
-    var y1 = H * (0.10 + Math.random()*0.16);
-    var main = jagged(x0, y0, x1, y1, 26 + Math.random()*26, 6, 0).pts;
-    var n = main.length;
-
-    // veins at hand-picked attach points (mostly drooping; a few reach sideways),
-    // each with a chance of one smaller second-level veinlet — the "spider" look
-    var subs = [];
-    var veins = 4 + Math.floor(Math.random()*3);
-    for (var k = 0; k < veins; k++){
-      var at = 0.12 + Math.random()*0.76;                // fraction along the main channel
-      var p = main[Math.round(at * (n - 1))];
-      var droop = Math.random() < 0.75;
-      var ang = droop ? 0.6 + Math.random()*1.9          // downward fan (~35°–145°)
-                      : (Math.random() < 0.5 ? -0.25 + Math.random()*0.5
-                                             : Math.PI - 0.25 + Math.random()*0.5);
-      var len = H * (0.07 + Math.random()*0.14);
-      var vp = jagged(p.x, p.y, p.x + Math.cos(ang)*len, p.y + Math.sin(ang)*len,
-                      10 + Math.random()*8, 4, 0).pts;
-      subs.push({ pts: vp, at: at });
-      if (Math.random() < 0.6){
-        var f2 = 0.35 + Math.random()*0.4;
-        var q = vp[Math.round(f2 * (vp.length - 1))];
-        var a2 = ang + (Math.random()*1.6 - 0.8);
-        var l2 = len * (0.35 + Math.random()*0.35);
-        subs.push({
-          pts: jagged(q.x, q.y, q.x + Math.cos(a2)*l2, q.y + Math.sin(a2)*l2, 6, 3, 0).pts,
-          at: Math.min(0.9, at + f2 * VEIN_GROW)         // clamped so it always finishes unfurling
-        });
-      }
-    }
-
-    crawlers.push({
-      main: main, subs: subs, t: 0,
-      prop: (REDUCED ? 2.4 : 1.2) + Math.random()*0.7,   // crawl time — slow enough to watch
-      linger: 0.5 + Math.random()*0.4,
-      fade: 1.0 + Math.random()*0.5,
-      width: 1.0 + Math.random()*0.5,
-      bright: 0.5 + Math.random()*0.2,                   // dimmer than a bolt on purpose
-      tint: '170,200,255',
-      pulsed: false
-    });
-    illum = Math.min(illumMax, illum + (REDUCED ? 0.07 : 0.12));  // soft sky light, well capped
   }
 
   // stroke a polyline up to `prog` (0..1) of its points, with an interpolated tip
@@ -722,23 +663,50 @@
     }
   }
 
-  function drawCrawler(c){
-    var rp = c.t / c.prop;                     // reveal progress; runs past 1 into the linger
-    var fading = c.t - c.prop - c.linger;
-    var alpha = c.bright * (rp < 1 ? 0.55 + 0.45 * rp : 1);   // brightens as it spreads
-    if (fading > 0) alpha *= Math.max(0, 1 - fading / c.fade);
+  // the interpolated point `prog` (0..1) of the way along a polyline
+  function pointAt(pts, prog){
+    var last = (pts.length - 1) * Math.max(0, Math.min(1, prog));
+    var i = Math.floor(last), fr = last - i;
+    if (i >= pts.length - 1) return pts[pts.length - 1];
+    var a = pts[i], b = pts[i + 1];
+    return { x: a.x + (b.x - a.x) * fr, y: a.y + (b.y - a.y) * fr };
+  }
+
+  // The bolt draws itself: while the leader travels, the channel fades IN behind a white-hot
+  // head, and branches unfurl as it passes their attach points. On arrival the whole channel
+  // flashes (the return stroke), then fades OUT — the white core dies faster than the tinted
+  // glow, so a dying bolt visibly cools from white toward its colour.
+  function drawBolt(b){
+    var rp = b.age / b.drawT;                    // reveal progress (runs past 1 after arrival)
+    var prog = Math.min(1, rp);
+    var env = b.done ? Math.max(0, b.life) : (0.30 + 0.55 * prog);   // fade in → flash → fade out
+    var alpha = env * b.bright;
     if (alpha <= 0) return;
     g.lineCap = 'round'; g.lineJoin = 'round';
-    var passes = [[c.width*6, 0.04], [c.width*2.8, 0.10], [c.width*1.5, 0.38], [c.width*0.65, 0.85]];
-    for (var q = 0; q < passes.length; q++){
+    // wide soft glow → thin white-hot core
+    var passes = [[b.width*7, 0.05], [b.width*3.2, 0.11], [b.width*1.6, 0.5], [b.width*0.7, 1.0]];
+    for (var p = 0; p < passes.length; p++){
+      var core = (p === passes.length - 1);
+      var a = passes[p][1] * alpha * (core ? env : 1);   // core ~env², glow ~env → the cooling
+      if (a <= 0.002) continue;
       g.beginPath();
-      tracePartial(c.main, rp);
-      for (var s = 0; s < c.subs.length; s++)
-        tracePartial(c.subs[s].pts, (rp - c.subs[s].at) / VEIN_GROW);
-      g.lineWidth = passes[q][0];
-      var col = (q === passes.length - 1) ? '235,241,255' : c.tint;   // soft core, never white-hot
-      g.strokeStyle = 'rgba(' + col + ',' + (passes[q][1] * alpha) + ')';
+      tracePartial(b.main, prog);
+      for (var s = 0; s < b.subs.length; s++)
+        tracePartial(b.subs[s].pts, (rp - b.subs[s].at) / 0.3);
+      g.lineWidth = passes[p][0];
+      g.strokeStyle = 'rgba(' + (core ? '255,255,255' : b.tint) + ',' + a + ')';
       g.stroke();
+    }
+    // the brightest white lives at the leading edge while the leader is still travelling
+    if (!b.done){
+      var hp = pointAt(b.main, prog);
+      var hr = b.width * 1.4;
+      var gh = g.createRadialGradient(hp.x, hp.y, 0, hp.x, hp.y, hr * 4);
+      gh.addColorStop(0, 'rgba(255,255,255,0.9)');
+      gh.addColorStop(0.35, 'rgba(235,241,255,0.35)');
+      gh.addColorStop(1, 'rgba(235,241,255,0)');
+      g.fillStyle = gh;
+      g.beginPath(); g.arc(hp.x, hp.y, hr * 4, 0, Math.PI * 2); g.fill();
     }
   }
 
@@ -888,26 +856,22 @@
     for (var b = bolts.length - 1; b >= 0; b--){
       var bo = bolts[b];
       drawBolt(bo);
-      bo.life -= dt * bo.decay;
-      if (bo.flicker > 0){
-        bo.flickerT += dt;
-        if (bo.flickerT > 0.05 && bo.life < 0.45){
-          bo.life = 1; bo.flicker--; bo.flickerT = 0;
-          illum = Math.min(illumMax, illum + bo.bright * 0.3);
+      bo.age += dt;
+      if (!bo.done && bo.age >= bo.drawT){
+        bo.done = true; bo.life = 1;   // arrival — the return-stroke flash
+        illum = Math.min(illumMax, illum + bo.bright * (REDUCED ? 0.25 : 0.5) * 0.65);
+      }
+      if (bo.done){
+        bo.life -= dt * bo.decay;
+        if (bo.flicker > 0){
+          bo.flickerT += dt;
+          if (bo.flickerT > 0.05 && bo.life < 0.45){
+            bo.life = 1; bo.flicker--; bo.flickerT = 0;
+            illum = Math.min(illumMax, illum + bo.bright * 0.3);
+          }
         }
+        if (bo.life <= 0) bolts.splice(b, 1);
       }
-      if (bo.life <= 0) bolts.splice(b, 1);
-    }
-
-    for (var ci = crawlers.length - 1; ci >= 0; ci--){
-      var cr = crawlers[ci];
-      drawCrawler(cr);
-      cr.t += dt;
-      if (!cr.pulsed && cr.t >= cr.prop){
-        cr.pulsed = true;                                  // soft swell once fully spread
-        illum = Math.min(illumMax, illum + (REDUCED ? 0.08 : 0.14));
-      }
-      if (cr.t > cr.prop + cr.linger + cr.fade) crawlers.splice(ci, 1);
     }
 
     drawMeter(rms);
@@ -963,18 +927,12 @@
 
   function autoStrike(){
     if (!state.running || !state.lightning) { strikeTimer = null; return; }
-    var crawl = Math.random() < 0.18;   // a crawler is an event, not wallpaper — keep it rare
-    if (crawl){
-      spawnCrawler();
-      fireThunder(2.6 + Math.random() * 2.4);   // crawlers are high + far — the sound arrives late
-    } else {
-      spawnBolt(THUNDER_I);
-      // flash first, rumble after — the pre-signal lead reduces startle
-      var delay = (1.2 + (1 - THUNDER_I) * 4) * (0.7 + Math.random() * 0.6);
-      fireThunder(delay);
-    }
-    // schedule the next one (calm, researched spacing; extra rest after a crawler)
-    var gap = (4 + (1 - THUNDER_I) * 16) * (0.7 + Math.random() * 0.8) + (crawl ? 5 : 0);
+    spawnBolt(THUNDER_I);
+    // flash first, rumble after — the pre-signal lead reduces startle
+    var delay = (1.2 + (1 - THUNDER_I) * 4) * (0.7 + Math.random() * 0.6);
+    fireThunder(delay);
+    // schedule the next one (calm, researched spacing)
+    var gap = (4 + (1 - THUNDER_I) * 16) * (0.7 + Math.random() * 0.8);
     if (REDUCED) gap *= 1.6;
     strikeTimer = setTimeout(autoStrike, gap * 1000);
   }
@@ -985,13 +943,6 @@
     if (!state.running || !state.lightning) return;
     spawnBolt(THUNDER_I);
     fireThunder(0.35 + Math.random() * 0.4);
-  }
-
-  // Manual crawler (C key): the slow horizontal form, on demand. Same gate as the bolt.
-  function manualCrawler(){
-    if (!state.running || !state.lightning) return;
-    spawnCrawler();
-    fireThunder(2.2 + Math.random() * 1.5);
   }
 
   var sleepTimerId = null;
@@ -1181,11 +1132,11 @@
   });
   window.addEventListener('pointermove', function(){ if (state.running) noteInteraction(); });
   window.addEventListener('keydown', function(e){
-    if ((e.code === 'Space' || e.code === 'KeyC') && state.running){
-      if (e.code === 'Space') e.preventDefault();
-      var wasDim = dim > 0.35 || darkOn;   // a keypress on a dark/dimmed sky never fires hidden lightning
+    if (e.code === 'Space' && state.running){
+      e.preventDefault();
+      var wasDim = dim > 0.35 || darkOn;   // a tap on a dark/dimmed sky never fires a hidden bolt
       noteInteraction();
-      if (!wasDim) (e.code === 'KeyC' ? manualCrawler : manualStrike)();
+      if (!wasDim) manualStrike();
     }
   });
 
