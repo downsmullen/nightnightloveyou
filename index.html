@@ -15,8 +15,10 @@
    - The VISUAL scene stands on its own with the sound off (accessibility / muted-friendly).
    - Drawn forked bolts are the star; the sky glow is gentle and capped — never a harsh strobe.
    - Bolts DRAW themselves: a bright white leading edge wanders down the channel (most bolts
-     ~0.1–0.2s; the occasional lazy one takes ~0.5–0.9s), branches unfurl as it passes, the
-     whole channel flashes on arrival, then cools from white toward its tint as it fades.
+     ~0.1–0.2s; the occasional lazy one ~0.2–0.4s), branches unfurl as it passes, the whole
+     channel flashes on arrival — then dies FIFO: the tail lifts off from the origin and
+     chases the head down the channel, branches letting go as it passes, the core cooling
+     from white toward the bolt's tint on the way out.
    - Calm by default: opens as RAIN ONLY (lightning one tap away). Children are the audience —
      thunder is opt-in, slow-onset, and distant; nothing ever starts with a sharp transient.
 
@@ -600,11 +602,22 @@
     return {pts:pts, branches:branches};
   }
 
-  // Storybook palette — mostly ice-blue and warm-white, the odd lavender (never red:
-  // photosensitivity, and it reads as fire, not lightning).
+  // Storybook palette — ice-blue and warm-white in the majority, lavender plus deeper
+  // blues, indigo and violet as the occasional surprise (never red: photosensitivity,
+  // and it reads as fire, not lightning). The core stays white; the tint lives in the
+  // glow and in the colour a dying bolt cools into.
+  var TINTS = [
+    ['170,200,255', 0.30],   // ice blue
+    ['222,228,255', 0.22],   // warm white
+    ['198,186,255', 0.14],   // lavender
+    ['110,150,245', 0.12],   // deep sky blue
+    ['122,108,240', 0.11],   // indigo
+    ['165,110,235', 0.11]    // violet
+  ];
   function pickTint(){
     var r = Math.random();
-    return r < 0.5 ? '170,200,255' : (r < 0.85 ? '222,228,255' : '198,186,255');
+    for (var i = 0; i < TINTS.length; i++){ r -= TINTS[i][1]; if (r < 0) return TINTS[i][0]; }
+    return TINTS[0][0];
   }
 
   function spawnBolt(I){
@@ -628,16 +641,15 @@
       }
       subs.push({ pts: jagged(br.x0, br.y0, br.x1, br.y1, 16, 4, 0).pts, at: best / (n - 1) });
     }
-    // most bolts are quick; the occasional lazy one wanders down slowly and lingers
+    // most bolts are quick; the occasional lazy one wanders down slower and lingers
     var lazy = Math.random() < 0.22;
     var b = {
       main: main.pts,
       subs: subs,
       age: 0,
-      drawT: lazy ? 0.5 + Math.random()*0.4 : 0.10 + Math.random()*0.12,   // leader travel time
+      drawT: lazy ? 0.20 + Math.random()*0.20 : 0.10 + Math.random()*0.12,  // leader travel time
       done: false,                                // flips true on arrival (the return stroke)
-      life: 1,
-      decay: 1 / (lazy ? (0.5 + Math.random()*0.5) : (0.16 + Math.random()*0.22)),
+      fadeT: lazy ? 0.5 + Math.random()*0.5 : 0.16 + Math.random()*0.22,    // tail-chase time
       width: 1.3 + I*2.2,
       bright: 0.65 + I*0.35,
       flicker: (Math.random() < 0.5) ? (1 + Math.floor(Math.random()*2)) : 0,
@@ -650,17 +662,24 @@
     return b;
   }
 
-  // stroke a polyline up to `prog` (0..1) of its points, with an interpolated tip
-  function tracePartial(pts, prog){
-    if (prog <= 0) return;
-    var last = (pts.length - 1) * Math.min(1, prog);
-    var whole = Math.floor(last), fr = last - whole;
-    g.moveTo(pts[0].x, pts[0].y);
-    for (var i = 1; i <= whole; i++) g.lineTo(pts[i].x, pts[i].y);
-    if (fr > 0 && whole + 1 < pts.length){
-      var a = pts[whole], b = pts[whole + 1];
-      g.lineTo(a.x + (b.x - a.x) * fr, a.y + (b.y - a.y) * fr);
-    }
+  // stroke the span of a polyline between fractions `from` and `to` (each 0..1),
+  // with interpolated end points — the tool behind both the draw-in and the FIFO fade-out
+  function traceSpan(pts, from, to){
+    from = Math.max(0, Math.min(1, from));
+    to = Math.max(0, Math.min(1, to));
+    if (to - from <= 0.0001) return;
+    var n = pts.length - 1;
+    var a = from * n, z = to * n;
+    var i0 = Math.floor(a), f0 = a - i0;
+    var i1 = Math.floor(z), f1 = z - i1;
+    if (i0 >= n){ i0 = n; f0 = 0; }
+    var sx = pts[i0].x, sy = pts[i0].y;
+    if (f0 > 0){ sx += (pts[i0 + 1].x - sx) * f0; sy += (pts[i0 + 1].y - sy) * f0; }
+    g.moveTo(sx, sy);
+    for (var i = i0 + 1; i <= i1; i++) g.lineTo(pts[i].x, pts[i].y);
+    if (f1 > 0 && i1 < n)
+      g.lineTo(pts[i1].x + (pts[i1 + 1].x - pts[i1].x) * f1,
+               pts[i1].y + (pts[i1 + 1].y - pts[i1].y) * f1);
   }
 
   // the interpolated point `prog` (0..1) of the way along a polyline
@@ -674,12 +693,15 @@
 
   // The bolt draws itself: while the leader travels, the channel fades IN behind a white-hot
   // head, and branches unfurl as it passes their attach points. On arrival the whole channel
-  // flashes (the return stroke), then fades OUT — the white core dies faster than the tinted
-  // glow, so a dying bolt visibly cools from white toward its colour.
+  // flashes (the return stroke), then dies FIFO — the tail lifts off from the origin and
+  // chases the head down the channel, each branch letting go from its base as the erase
+  // front passes. Meanwhile the white core dies faster than the tinted glow, so what the
+  // chase leaves behind visibly cools from white toward the bolt's colour.
   function drawBolt(b){
     var rp = b.age / b.drawT;                    // reveal progress (runs past 1 after arrival)
     var prog = Math.min(1, rp);
-    var env = b.done ? Math.max(0, b.life) : (0.30 + 0.55 * prog);   // fade in → flash → fade out
+    var tail = b.done ? (b.age - b.drawT) / b.fadeT : 0;   // FIFO erase front (0..~1.35)
+    var env = b.done ? Math.max(0.35, 1 - 0.6 * Math.min(1, tail)) : (0.30 + 0.55 * prog);
     var alpha = env * b.bright;
     if (alpha <= 0) return;
     g.lineCap = 'round'; g.lineJoin = 'round';
@@ -690,9 +712,9 @@
       var a = passes[p][1] * alpha * (core ? env : 1);   // core ~env², glow ~env → the cooling
       if (a <= 0.002) continue;
       g.beginPath();
-      tracePartial(b.main, prog);
+      traceSpan(b.main, tail, prog);
       for (var s = 0; s < b.subs.length; s++)
-        tracePartial(b.subs[s].pts, (rp - b.subs[s].at) / 0.3);
+        traceSpan(b.subs[s].pts, (tail - b.subs[s].at) / 0.3, (rp - b.subs[s].at) / 0.3);
       g.lineWidth = passes[p][0];
       g.strokeStyle = 'rgba(' + (core ? '255,255,255' : b.tint) + ',' + a + ')';
       g.stroke();
@@ -858,19 +880,21 @@
       drawBolt(bo);
       bo.age += dt;
       if (!bo.done && bo.age >= bo.drawT){
-        bo.done = true; bo.life = 1;   // arrival — the return-stroke flash
+        bo.done = true;                // arrival — the return-stroke flash
         illum = Math.min(illumMax, illum + bo.bright * (REDUCED ? 0.25 : 0.5) * 0.65);
       }
       if (bo.done){
-        bo.life -= dt * bo.decay;
+        var tl = (bo.age - bo.drawT) / bo.fadeT;   // how far the erase front has chased
         if (bo.flicker > 0){
           bo.flickerT += dt;
-          if (bo.flickerT > 0.05 && bo.life < 0.45){
-            bo.life = 1; bo.flicker--; bo.flickerT = 0;
+          if (bo.flickerT > 0.05 && tl > 0.55){
+            bo.age = bo.drawT;         // restrike: the full channel re-lights, the chase restarts
+            bo.flicker--; bo.flickerT = 0;
             illum = Math.min(illumMax, illum + bo.bright * 0.3);
           }
         }
-        if (bo.life <= 0) bolts.splice(b, 1);
+        // gone once the erase front has cleared the channel AND the last branch tips (+0.3)
+        if (tl >= 1.35) bolts.splice(b, 1);
       }
     }
 
