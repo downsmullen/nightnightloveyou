@@ -10,8 +10,12 @@
   Night Night Love You — Storm scene (v2).
 
   Design contract (keep these true forever):
-   - ONE self-contained file. No network calls, no fonts, no CDN, no build step.
+   - ONE self-contained file. No fonts, no CDN, no build step, nothing loaded from anywhere.
      It must run by double-clicking it offline. The file is the 50-year bet, not the host.
+   - ONE exception (Tim, 2026-10-02): after "tap to begin", fire-and-forget beacons to this
+     site's OWN /api/hello for a visitor count — event name, phone/tablet/desktop, "came back
+     on a later day" yes/no. No ID, no cookie, no third party. Never sent offline or from a
+     double-clicked file; failure is silent and nothing ever waits on it. See count().
    - The VISUAL scene stands on its own with the sound off (accessibility / muted-friendly).
    - Drawn forked bolts are the star; the sky glow is gentle and capped — never a harsh strobe.
    - Bolts DRAW themselves: a bright white leading edge wanders down the channel (most bolts
@@ -209,6 +213,39 @@
         if (typeof s.muted === 'boolean') state.muted = s.muted;
         if (s.timer === 'off' || s.timer === '15' || s.timer === '30' || s.timer === '60') state.timer = s.timer;
       }
+    } catch(e){}
+  }
+
+  // Visitor count (Tim, 2026-10-02 — see docs/tracking-and-donate-plan.md).
+  // One fire-and-forget beacon to THIS site's own /api/hello, never to anyone else, and only
+  // after "tap to begin" (bots almost never tap). Sends an event name, phone/tablet/desktop and
+  // "came back on a later day" yes/no — no ID, no cookie. Each event at most once per page load.
+  // Offline, double-clicked, or anything failing: silently does nothing; the scene never waits on it.
+  var SEEN_KEY = 'nnly-first-seen';   // local date of this device's first visit; never sent
+  var counted = {};
+  function deviceKind(){
+    var coarse = false;
+    try { coarse = window.matchMedia('(pointer:coarse)').matches; } catch(e){}
+    if (!coarse) return 'desktop';
+    return Math.min(screen.width, screen.height) < 600 ? 'phone' : 'tablet';
+  }
+  function cameBack(){
+    var d = new Date();
+    var today = d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate();
+    try {
+      var first = localStorage.getItem(SEEN_KEY);
+      if (!first){ localStorage.setItem(SEEN_KEY, today); return 0; }
+      return first !== today ? 1 : 0;
+    } catch(e){ return 0; }
+  }
+  var visitBack = null;   // computed once, on the first count
+  function count(ev){
+    if (counted[ev]) return;
+    counted[ev] = true;
+    try {
+      if (!/^https?:$/.test(location.protocol) || !navigator.sendBeacon) return;
+      if (visitBack === null) visitBack = cameBack();
+      navigator.sendBeacon('/api/hello?e=' + ev + '&r=' + visitBack + '&d=' + deviceKind());
     } catch(e){}
   }
 
@@ -981,6 +1018,7 @@
   }
   function beginSleepFade(){
     sleeping = true;             // frame() eases the visual to black
+    count('sleep_done');
     if (actx && master){        // gently ramp audio to silence over ~8s
       var now = actx.currentTime;
       master.gain.cancelScheduledValues(now);
@@ -1064,6 +1102,10 @@
     if (state.running) return;
     Storm.start();
     beginEl.classList.add('hide');
+    count('begin');
+    if (state.lightning) count('lightning');        // restored on from a past visit
+    if (state.timer !== 'off') count('sleep_set');
+    setTimeout(function(){ if (state.running) count('stay10'); }, 10 * 60000);
   }
   beginEl.addEventListener('click', begin);
   beginEl.addEventListener('keydown', function(e){
@@ -1102,6 +1144,7 @@
     if (state.running){
       if (state.lightning){ if (!strikeTimer) autoStrike(); }
       else if (strikeTimer){ clearTimeout(strikeTimer); strikeTimer = null; }
+      if (state.lightning) count('lightning');
     }
     saveState();
   });
@@ -1112,6 +1155,7 @@
 
   sleepSel.addEventListener('change', function(){
     setSleepTimer(sleepSel.value);
+    if (state.running && state.timer !== 'off') count('sleep_set');
     saveState();
   });
 
