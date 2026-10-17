@@ -1,6 +1,6 @@
 # Visitor counting + a donate link — plan (2026-10-02)
 
-> Status: **APPROVED 2026-10-02 — Phase 1 (counting) built on branch, not yet live — needs Cloudflare setup (below) then merge. Phase 2 (donate link) waits ~4 weeks for numbers.**
+> Status: **APPROVED 2026-10-02 — Phase 1 (counting) LIVE since 2026-10-02 (merged + first `begin` row confirmed by Tim). Phase 2 (donate link) waits for the 2026-10-30 follow-up.**
 > Source: the donations study, section 7 (`TDM_Vault/reviews/phone-market-research-2026-10-02/10-donations-and-tips.md`).
 > Decisions here are dated direction, re-arguable.
 
@@ -84,7 +84,7 @@ The page's design contract says **"no network calls — runs offline by double-c
 
 ## Phase 1 — build status (2026-10-02)
 
-Built and tested locally, **not committed, not live.**
+Built, tested, merged and **live 2026-10-02**. Cloudflare setup below is done.
 - Page: `count()` in `index.html` — events `begin`, `lightning`, `sleep_set`, `sleep_done`, `stay10` (still playing after 10 min; added as the study's time-on-page "real person" signal — easy to drop).
 - Server: `functions/api/hello.js` → D1 table in `db/schema.sql`. Read-out: `db/readout.sql`.
 - Tested: function against real SQLite (bad origin / bad values / no binding all ignored); in browser, nothing sent before the tap, each event once, "came back" flag right, nothing sent off a non-website copy.
@@ -94,4 +94,4 @@ Built and tested locally, **not committed, not live.**
 2. Create the table: paste `db/schema.sql` into the D1 console, or `npx wrangler d1 execute nnly-visits --remote --file db/schema.sql`.
 3. Pages project → Settings → Bindings → add D1 binding, variable name **`VISITS`**, database `nnly-visits` (Production).
 4. Merge to `main` → auto-deploys. Until step 3 is done the function quietly does nothing, so order isn't fragile.
-5. Write down the go-live date; slide the Oct 30 calendar event to 4 weeks after it if needed.
+5. Go-live: 2026-10-02 — the Oct 30 follow-up stays as is.
